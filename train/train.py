@@ -59,7 +59,7 @@ def main():
   TAU = 0.95 # 0.005
   LR = 1e-4
   target_update_interval = 1000
-  RUNNING_AVERAGE_LENGTH = 10
+  RUNNING_AVERAGE_LENGTH = 100
 
   # Get number of actions from gym action space
   n_actions = int(env.action_space.n)
@@ -148,8 +148,8 @@ def main():
 
   total_action_count = 500_000
 
-  episodeRewardRunningAverage = RunningAverage(RUNNING_AVERAGE_LENGTH)
-  episodeLengthRunningAverage = RunningAverage(RUNNING_AVERAGE_LENGTH)
+  episodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
+  episodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
 
   # Initialize the environment and get its state
   state, info = env.reset()
