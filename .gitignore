@@ -1,2 +1,4 @@
 runs/*
-policy_net.pt
+*.pt
+experiments.md
+*/__pycache__/*

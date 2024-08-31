@@ -55,10 +55,11 @@ def main():
   GAMMA = 0.99
   exploration_initial_eps = 1.0
   exploration_final_eps = 0.05
-  exploration_fraction = 0.1
+  exploration_fraction = 0.02
   TAU = 0.95 # 0.005
   LR = 1e-4
   target_update_interval = 1000
+  RUNNING_AVERAGE_LENGTH = 10
 
   # Get number of actions from gym action space
   n_actions = int(env.action_space.n)
@@ -72,7 +73,6 @@ def main():
 
   optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
   memory = ReplayMemory(10000)
-
 
   def select_action(state, actionIndex, totalActionCount):
     progress = actionIndex / totalActionCount
@@ -146,7 +146,10 @@ def main():
     flattened = gym.spaces.utils.flatten(env.observation_space, obs)
     return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
 
-  total_action_count = 100_000
+  total_action_count = 500_000
+
+  episodeRewardRunningAverage = RunningAverage(RUNNING_AVERAGE_LENGTH)
+  episodeLengthRunningAverage = RunningAverage(RUNNING_AVERAGE_LENGTH)
 
   # Initialize the environment and get its state
   state, info = env.reset()
@@ -185,8 +188,10 @@ def main():
       target_net.load_state_dict(target_net_state_dict)
 
     if done:
-      writer.add_scalar("Episode_reward", episodeReward, episode_index)
-      writer.add_scalar("Episode_length", episodeStepIndex+1, episode_index)
+      episodeRewardRunningAverage.add(episodeReward)
+      episodeLengthRunningAverage.add(episodeStepIndex+1)
+      writer.add_scalar("Episode_reward", episodeRewardRunningAverage.average(), action_index)
+      writer.add_scalar("Episode_length", episodeLengthRunningAverage.average(), action_index)
       if episode_index % 100 == 0:
         print(f'Episode {episode_index} complete')
       episode_index += 1

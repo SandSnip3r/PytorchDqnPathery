@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-def main():
+def main(model_path):
   env = common.getEnv()
 
   # if GPU is to be used
@@ -36,7 +36,7 @@ def main():
 
   policy_net = common.DQN(n_observations, n_actions).to(device)
   print(f'Policy net: {policy_net}')
-  policy_net.load_state_dict(torch.load('policy_net.pt', weights_only=True))
+  policy_net.load_state_dict(torch.load(model_path, weights_only=True))
   print(f'Policy net: {policy_net}')
 
   observation, info = env.reset()
