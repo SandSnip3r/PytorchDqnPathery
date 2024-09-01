@@ -55,7 +55,7 @@ def main():
   GAMMA = 0.99
   exploration_initial_eps = 1.0
   exploration_final_eps = 0.05
-  exploration_fraction = 0.02
+  exploration_fraction = 0.033333
   TAU = 0.95 # 0.005
   LR = 1e-4
   target_update_interval = 1000
@@ -146,7 +146,7 @@ def main():
     flattened = gym.spaces.utils.flatten(env.observation_space, obs)
     return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
 
-  total_action_count = 500_000
+  total_action_count = 300_000
 
   episodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   episodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)

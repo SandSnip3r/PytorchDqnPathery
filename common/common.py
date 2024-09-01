@@ -50,8 +50,8 @@ class DQN(nn.Module):
   def __init__(self, n_observations, n_actions):
     super(DQN, self).__init__()
     print(f'Initializing net with {n_observations} observations and {n_actions} actions')
-    self.layer1 = nn.Linear(n_observations, 1024)
-    self.layer2 = nn.Linear(1024, 512)
+    self.layer1 = nn.Linear(n_observations, 512)
+    self.layer2 = nn.Linear(512, 512)
     self.layer3 = nn.Linear(512, n_actions)
 
   # Called with either one element to determine next action, or a batch
