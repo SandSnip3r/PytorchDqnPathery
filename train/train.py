@@ -15,8 +15,6 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 def main():
-  writer = SummaryWriter()
-
   env = common.getEnv()
 
   # if GPU is to be used
@@ -72,8 +70,9 @@ def main():
   target_net.load_state_dict(policy_net.state_dict())
 
   optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
-  memory = ReplayMemory(10000)
+  memory = ReplayMemory(100000)
 
+  writer = SummaryWriter()
   def select_action(state, actionIndex, totalActionCount):
     progress = actionIndex / totalActionCount
     sample = random.random()
