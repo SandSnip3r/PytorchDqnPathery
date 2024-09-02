@@ -14,28 +14,27 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+
+class ReplayMemory(object):
+
+  def __init__(self, capacity):
+    self.memory = deque([], maxlen=capacity)
+
+  def push(self, *args):
+    """Save a transition"""
+    self.memory.append(Transition(*args))
+
+  def sample(self, batch_size):
+    return random.sample(self.memory, batch_size)
+
+  def __len__(self):
+    return len(self.memory)
 
 def main():
   env = common.getEnv()
   device = common.getDevice()
   print(f'Using device {device}')
-
-  Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
-
-  class ReplayMemory(object):
-
-    def __init__(self, capacity):
-      self.memory = deque([], maxlen=capacity)
-
-    def push(self, *args):
-      """Save a transition"""
-      self.memory.append(Transition(*args))
-
-    def sample(self, batch_size):
-      return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-      return len(self.memory)
 
   # BATCH_SIZE is the number of transitions sampled from the replay buffer
   # GAMMA is the discount factor as mentioned in the previous section
@@ -44,20 +43,16 @@ def main():
   # EXPLORATION_FRACTION specifies at what point in training does exploration reach the final value
   # TAU is the update rate of the target network
   # LR is the learning rate of the ``AdamW`` optimizer
-  BATCH_SIZE = 64
+  BATCH_SIZE = 256
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
   EXPLORATION_FINAL_EPS = 0.05
-  EXPLORATION_FRACTION = 0.1
+  EXPLORATION_FRACTION = 0.02
   TAU = 0.95 # 0.005
   LR = 1e-4
   TARGET_UPDATE_INTERVAL = 1000
   RUNNING_AVERAGE_LENGTH = 100
-
-  # Get number of actions from gym action space
-  n_actions = int(env.action_space.n)
-  # Get the number of state observations
-  n_observations = int(np.sum(env.observation_space.nvec))
+  TRAIN_FREQUENCY = 4
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
   target_net = torch.jit.script(common.convFromEnv(env).to(device))
@@ -68,12 +63,19 @@ def main():
   memory = ReplayMemory(100000)
 
   writer = SummaryWriter()
-  def select_action(state, actionIndex, totalActionCount):
-    progress = actionIndex / totalActionCount
-    sample = random.random()
-    eps_threshold = EXPLORATION_INITIAL_EPS + (EXPLORATION_FINAL_EPS-EXPLORATION_INITIAL_EPS) * (min(progress, EXPLORATION_FRACTION) / EXPLORATION_FRACTION)
-    writer.add_scalar("Epsilon", eps_threshold, actionIndex)
-    if sample > eps_threshold:
+
+  def calculateExplorationEpsilon(action_index, total_action_count):
+    progress = action_index / total_action_count
+    return EXPLORATION_INITIAL_EPS + (EXPLORATION_FINAL_EPS-EXPLORATION_INITIAL_EPS) * (min(progress, EXPLORATION_FRACTION) / EXPLORATION_FRACTION)
+
+  def select_action(state, eps_threshold, deterministic=False):
+    explore = False
+    if not deterministic:
+      sample = random.random()
+      explore = sample <= eps_threshold
+    if explore:
+      return torch.tensor([env.action_space.sample()], device=device, dtype=torch.long)
+    else:
       with torch.no_grad():
         # t.max(1) will return the largest column value of each row.
         # second column on max result is index of where max element was
@@ -82,8 +84,6 @@ def main():
         netResult = policy_net(observationAsTensor)
         # TODO: Apply mask here to netResult
         return netResult.max(1).indices.view(1,1).squeeze(0)
-    else:
-      return torch.tensor([env.action_space.sample()], device=device, dtype=torch.long)
 
   def optimize_model():
     if len(memory) < BATCH_SIZE:
@@ -134,8 +134,19 @@ def main():
     # In-place gradient clipping
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
+    
+  def calculateDeterministicReward():
+    done = False
+    observation, info = env.reset()
+    episodeReward = 0
+    while not done:
+      action = select_action(observation, eps_threshold=None, deterministic=True)
+      observation, reward, terminated, truncated, _ = env.step(action.item())
+      episodeReward += reward
+      done = terminated
+    return episodeReward
 
-  total_action_count = 1_000_000
+  total_action_count = 50_000
 
   episodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   episodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
@@ -146,7 +157,10 @@ def main():
   episodeStepIndex = 0
   episode_index = 0
   for action_index in range(total_action_count):
-    action = select_action(state, action_index, total_action_count)
+    eps_threshold = calculateExplorationEpsilon(action_index, total_action_count)
+    writer.add_scalar("Epsilon", eps_threshold, action_index)
+
+    action = select_action(state, eps_threshold)
     observation, reward, terminated, truncated, _ = env.step(action.item())
     reward = torch.tensor([reward], device=device)
     done = terminated or truncated
@@ -163,8 +177,9 @@ def main():
     # Move to the next state
     state = next_state
 
-    # Perform one step of the optimization (on the policy network)
-    optimize_model()
+    if (action_index+1) % TRAIN_FREQUENCY == 0:
+      # Perform one step of the optimization (on the policy network)
+      optimize_model()
 
     if (action_index+1) % TARGET_UPDATE_INTERVAL == 0:
       print(f'Updating target network (episode #{episode_index}, action #{action_index})')
@@ -177,7 +192,7 @@ def main():
       target_net.load_state_dict(target_net_state_dict)
 
     if done:
-      episodeRewardRunningAverage.add(episodeReward)
+      episodeRewardRunningAverage.add(calculateDeterministicReward())
       episodeLengthRunningAverage.add(episodeStepIndex+1)
       writer.add_scalar("Episode_reward", episodeRewardRunningAverage.average(), action_index)
       writer.add_scalar("Episode_length", episodeLengthRunningAverage.average(), action_index)

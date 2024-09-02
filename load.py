@@ -6,7 +6,7 @@ from load import load
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Load a pathery model.")
-  parser.add_argument('--model', type=str, help='The model file with extension .pt')
+  parser.add_argument('--model', default='policy_net_script.pt', type=str, help='The model file with extension .pt')
 
   args = parser.parse_args()
 
