@@ -29,12 +29,7 @@ def main(model_path):
   # Get the number of state observations
   n_observations = np.sum(env.observation_space.nvec)
 
-  def observationToTensor(obs):
-    # Pull observation out of observation & mask dict
-    flattened = gym.spaces.utils.flatten(env.observation_space, obs)
-    return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
-
-  policy_net = common.DQN(n_observations, n_actions).to(device)
+  policy_net = common.convFromEnv(env).to(device)
   print(f'Policy net: {policy_net}')
   policy_net.load_state_dict(torch.load(model_path, weights_only=True))
   print(f'Policy net: {policy_net}')
@@ -46,7 +41,7 @@ def main(model_path):
   done = False
 
   while not done:
-    action_values = policy_net(observationToTensor(observation))
+    action_values = policy_net(common.observationToTensor(observation, device))
     max_action = action_values.max(1).indices.view(1,1).squeeze(0)
 
     observation, reward, terminated, truncated, info = env.step(max_action.item())

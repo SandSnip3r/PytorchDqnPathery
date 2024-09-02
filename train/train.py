@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+
 def main():
   env = common.getEnv()
 
@@ -44,19 +45,19 @@ def main():
 
   # BATCH_SIZE is the number of transitions sampled from the replay buffer
   # GAMMA is the discount factor as mentioned in the previous section
-  # exploration_initial_eps is the starting value of epsilon
-  # exploration_final_eps is the final value of epsilon
-  # exploration_fraction specifies at what point in training does exploration reach the final value
+  # EXPLORATION_INITIAL_EPS is the starting value of epsilon
+  # EXPLORATION_FINAL_EPS is the final value of epsilon
+  # EXPLORATION_FRACTION specifies at what point in training does exploration reach the final value
   # TAU is the update rate of the target network
   # LR is the learning rate of the ``AdamW`` optimizer
-  BATCH_SIZE = 32
+  BATCH_SIZE = 64
   GAMMA = 0.99
-  exploration_initial_eps = 1.0
-  exploration_final_eps = 0.05
-  exploration_fraction = 0.033333
+  EXPLORATION_INITIAL_EPS = 1.0
+  EXPLORATION_FINAL_EPS = 0.05
+  EXPLORATION_FRACTION = 0.1
   TAU = 0.95 # 0.005
   LR = 1e-4
-  target_update_interval = 1000
+  TARGET_UPDATE_INTERVAL = 1000
   RUNNING_AVERAGE_LENGTH = 100
 
   # Get number of actions from gym action space
@@ -64,8 +65,8 @@ def main():
   # Get the number of state observations
   n_observations = int(np.sum(env.observation_space.nvec))
 
-  policy_net = torch.jit.script(common.DQN(n_observations, n_actions).to(device))
-  target_net = torch.jit.script(common.DQN(n_observations, n_actions).to(device))
+  policy_net = torch.jit.script(common.convFromEnv(env).to(device))
+  target_net = torch.jit.script(common.convFromEnv(env).to(device))
   print(f'Policy net: {policy_net}')
   target_net.load_state_dict(policy_net.state_dict())
 
@@ -76,14 +77,14 @@ def main():
   def select_action(state, actionIndex, totalActionCount):
     progress = actionIndex / totalActionCount
     sample = random.random()
-    eps_threshold = exploration_initial_eps + (exploration_final_eps-exploration_initial_eps) * (min(progress, exploration_fraction) / exploration_fraction)
+    eps_threshold = EXPLORATION_INITIAL_EPS + (EXPLORATION_FINAL_EPS-EXPLORATION_INITIAL_EPS) * (min(progress, EXPLORATION_FRACTION) / EXPLORATION_FRACTION)
     writer.add_scalar("Epsilon", eps_threshold, actionIndex)
     if sample > eps_threshold:
       with torch.no_grad():
         # t.max(1) will return the largest column value of each row.
         # second column on max result is index of where max element was
         # found, so we pick action with the larger expected reward.
-        observationAsTensor = observationToTensor(state)
+        observationAsTensor = common.observationToTensor(state, device)
         netResult = policy_net(observationAsTensor)
         # TODO: Apply mask here to netResult
         return netResult.max(1).indices.view(1,1).squeeze(0)
@@ -107,9 +108,9 @@ def main():
     # (a final state would've been the one after which simulation ended)
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)), device=device, dtype=torch.bool)
-    non_final_next_states = torch.cat([observationToTensor(s) for s in batch.next_state
+    non_final_next_states = torch.cat([common.observationToTensor(s, device).unsqueeze(0) for s in batch.next_state
                                                 if s is not None])
-    state_batch = torch.cat([observationToTensor(s) for s in batch.state])
+    state_batch = torch.cat([common.observationToTensor(s, device).unsqueeze(0) for s in batch.state])
     action_batch = torch.cat(batch.action).unsqueeze(1)
     reward_batch = torch.cat(batch.reward)
 
@@ -140,12 +141,7 @@ def main():
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
 
-  def observationToTensor(obs):
-    # Pull observation out of observation & mask dict
-    flattened = gym.spaces.utils.flatten(env.observation_space, obs)
-    return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
-
-  total_action_count = 300_000
+  total_action_count = 1_000_000
 
   episodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   episodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
@@ -176,7 +172,7 @@ def main():
     # Perform one step of the optimization (on the policy network)
     optimize_model()
 
-    if (action_index+1) % target_update_interval == 0:
+    if (action_index+1) % TARGET_UPDATE_INTERVAL == 0:
       print(f'Updating target network (episode #{episode_index}, action #{action_index})')
       # Soft update of the target network's weights
       # θ′ ← τ θ + (1 −τ )θ′

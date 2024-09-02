@@ -1,6 +1,7 @@
 from collections import deque
 import gymnasium as gym
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -42,13 +43,36 @@ def getEnv():
       # Pass any arguments (e.g., seed) to the underlying environment's reset method
       return self.env.reset(**kwargs)
 
-  return FlattenActionWrapper(env)
+  class ConvObservationWrapper(gym.Wrapper):
+    def __init__(self, env):
+      super(ConvObservationWrapper, self).__init__(env)
+      self.original_observation_space = env.observation_space
+      self.channel_count = env.observation_space[0][0].n
+      self.height = env.observation_space.shape[0]
+      self.width = env.observation_space.shape[1]
+      
+    def obsToImage(self, obs):
+      oneHot = np.zeros((self.channel_count, obs.shape[0], obs.shape[1]), dtype=np.float32)
+      for i in range(self.channel_count):
+        oneHot[i] = (obs == i)
+      return oneHot
+    
+    def step(self, action):
+      obs, *other = self.env.step(action)
+      return self.obsToImage(obs), *other
+    
+    def reset(self, **kwargs):
+      # Pass any arguments (e.g., seed) to the underlying environment's reset method
+      obs, *other = self.env.reset(**kwargs)
+      return self.obsToImage(obs), *other
 
-# Define class DQN
-class DQN(nn.Module):
+  env = FlattenActionWrapper(env)
+  return ConvObservationWrapper(env)
+
+class DenseDQN(nn.Module):
 
   def __init__(self, n_observations, n_actions):
-    super(DQN, self).__init__()
+    super(DenseDQN, self).__init__()
     print(f'Initializing net with {n_observations} observations and {n_actions} actions')
     self.layer1 = nn.Linear(n_observations, 512)
     self.layer2 = nn.Linear(512, 512)
@@ -60,3 +84,49 @@ class DQN(nn.Module):
     x = F.relu(self.layer1(x))
     x = F.relu(self.layer2(x))
     return self.layer3(x)
+
+class ConvDQN(nn.Module):
+
+  def __init__(self, input_channels, grid_height, grid_width, n_actions):
+    super(ConvDQN, self).__init__()
+    print(f'Initializing net with input channels: {input_channels}, grid size: ({grid_height}, {grid_width}), and {n_actions} actions')
+
+    # Convolutional layers
+    self.conv1 = nn.Conv2d(in_channels=input_channels, out_channels=32, kernel_size=3, stride=1, padding=1)
+    self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
+    self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1)
+
+    # Calculate the size of the output from conv layers for the fully connected layer
+    # Assuming the conv layers do not change the spatial dimensions (stride=1 and padding=1)
+    conv_output_size = 64 * grid_height * grid_width
+
+    # Fully connected layer
+    self.fc = nn.Linear(conv_output_size, n_actions)
+
+  # Called with either one element to determine next action, or a batch
+  # during optimization. Returns tensor([[left0exp,right0exp]...]).
+  def forward(self, x):
+    if x.dim() == 3:
+      # Add a batch dimension
+      x = x.unsqueeze(0)
+
+    # Pass through convolutional layers
+    x = F.relu(self.conv1(x))
+    x = F.relu(self.conv2(x))
+    x = F.relu(self.conv3(x))
+
+    # Flatten the output for the fully connected layer
+    x = x.view(x.size(0), -1)
+
+    # Pass through fully connected layer
+    return self.fc(x)
+
+def convFromEnv(env):
+  n_actions = int(env.action_space.n)
+  return ConvDQN(int(env.channel_count), env.height, env.width, n_actions)
+
+def observationToTensor(obs, device):
+  # Pull observation out of observation & mask dict
+  # flattened = gym.spaces.utils.flatten(env.observation_space, obs)
+  # return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
+  return torch.tensor(obs, dtype=torch.float32, device=device)
