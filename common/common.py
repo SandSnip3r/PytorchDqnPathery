@@ -130,3 +130,10 @@ def observationToTensor(obs, device):
   # flattened = gym.spaces.utils.flatten(env.observation_space, obs)
   # return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
   return torch.tensor(obs, dtype=torch.float32, device=device)
+
+def getDevice():
+  return torch.device(
+    "cuda" if torch.cuda.is_available() else
+    "mps" if torch.backends.mps.is_available() else
+    "cpu"
+  )

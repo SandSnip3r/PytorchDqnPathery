@@ -15,23 +15,11 @@ import torch.nn.functional as F
 
 def main(model_path):
   env = common.getEnv()
-
-  # if GPU is to be used
-  device = torch.device(
-    "cuda" if torch.cuda.is_available() else
-    "mps" if torch.backends.mps.is_available() else
-    "cpu"
-  )
+  device = common.getDevice()
   print(f'Using device {device}')
 
-  # Get number of actions from gym action space
-  n_actions = env.action_space.n
-  # Get the number of state observations
-  n_observations = np.sum(env.observation_space.nvec)
-
-  policy_net = common.convFromEnv(env).to(device)
-  print(f'Policy net: {policy_net}')
-  policy_net.load_state_dict(torch.load(model_path, weights_only=True))
+  policy_net = torch.jit.load(model_path)
+  policy_net.eval()
   print(f'Policy net: {policy_net}')
 
   observation, info = env.reset()

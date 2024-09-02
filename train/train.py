@@ -17,13 +17,7 @@ import torch.nn.functional as F
 
 def main():
   env = common.getEnv()
-
-  # if GPU is to be used
-  device = torch.device(
-    "cuda" if torch.cuda.is_available() else
-    "mps" if torch.backends.mps.is_available() else
-    "cpu"
-  )
+  device = common.getDevice()
   print(f'Using device {device}')
 
   Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
@@ -197,7 +191,7 @@ def main():
 
     episodeStepIndex += 1
 
-  torch.save(policy_net.state_dict(), 'policy_net.pt')
+  policy_net.save('policy_net_script.pt')
 
 if __name__ == "__main__":
   main()
