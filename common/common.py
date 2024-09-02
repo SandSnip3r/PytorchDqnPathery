@@ -50,17 +50,17 @@ def getEnv():
       self.channel_count = env.observation_space[0][0].n
       self.height = env.observation_space.shape[0]
       self.width = env.observation_space.shape[1]
-      
+
     def obsToImage(self, obs):
       oneHot = np.zeros((self.channel_count, obs.shape[0], obs.shape[1]), dtype=np.float32)
       for i in range(self.channel_count):
         oneHot[i] = (obs == i)
       return oneHot
-    
+
     def step(self, action):
       obs, *other = self.env.step(action)
       return self.obsToImage(obs), *other
-    
+
     def reset(self, **kwargs):
       # Pass any arguments (e.g., seed) to the underlying environment's reset method
       obs, *other = self.env.reset(**kwargs)
