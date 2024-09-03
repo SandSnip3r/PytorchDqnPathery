@@ -29,10 +29,9 @@ def main(model_path):
   done = False
 
   while not done:
-    action_values = policy_net(common.observationToTensor(observation, device))
-    max_action = action_values.max(1).indices.view(1,1).squeeze(0)
+    action = common.select_action(env, observation, policy_net, device, eps_threshold=None, deterministic=True)
 
-    observation, reward, terminated, truncated, info = env.step(max_action.item())
+    observation, reward, terminated, truncated, info = env.step(action.item())
     print(env.render())
     print(f'info: {info}')
 

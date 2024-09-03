@@ -1,6 +1,7 @@
 from collections import deque
 import gymnasium as gym
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,16 +47,20 @@ def getEnv():
   class ConvObservationWrapper(gym.Wrapper):
     def __init__(self, env):
       super(ConvObservationWrapper, self).__init__(env)
-      self.original_observation_space = env.observation_space
-      self.channel_count = env.observation_space[0][0].n
-      self.height = env.observation_space.shape[0]
-      self.width = env.observation_space.shape[1]
+      self.original_observation_space = env.observation_space['board']
+      self.channel_count = self.original_observation_space[0][0].n
+      self.height = self.original_observation_space.shape[0]
+      self.width = self.original_observation_space.shape[1]
 
     def obsToImage(self, obs):
-      oneHot = np.zeros((self.channel_count, obs.shape[0], obs.shape[1]), dtype=np.float32)
+      board = obs['board']
+      oneHot = np.zeros((self.channel_count, board.shape[0], board.shape[1]), dtype=np.float32)
       for i in range(self.channel_count):
-        oneHot[i] = (obs == i)
-      return oneHot
+        oneHot[i] = (board == i)
+      return {
+        'board': oneHot,
+        'action_mask': obs['action_mask']
+      }
 
     def step(self, action):
       obs, *other = self.env.step(action)
@@ -129,7 +134,7 @@ def observationToTensor(obs, device):
   # Pull observation out of observation & mask dict
   # flattened = gym.spaces.utils.flatten(env.observation_space, obs)
   # return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
-  return torch.tensor(obs, dtype=torch.float32, device=device)
+  return torch.tensor(obs['board'], dtype=torch.float32, device=device)
 
 def getDevice():
   return torch.device(
@@ -137,3 +142,27 @@ def getDevice():
     "mps" if torch.backends.mps.is_available() else
     "cpu"
   )
+
+def select_action(env, state, policy_net, device, eps_threshold, deterministic=False):
+  explore = False
+  if not deterministic:
+    explore = random.random() <= eps_threshold
+  if explore:
+    mask = state['action_mask'].flatten()
+    # Sample actions until we get one which is valid according to the mask
+    while True:
+      action_index = env.action_space.sample()
+      if mask[action_index] == 1:
+        return torch.tensor([action_index], device=device, dtype=torch.long)
+  else:
+    with torch.no_grad():
+      # t.max(1) will return the largest column value of each row.
+      # second column on max result is index of where max element was
+      # found, so we pick action with the larger expected reward.
+      observationAsTensor = observationToTensor(state, device)
+      netResult = policy_net(observationAsTensor)
+      # Apply action mask
+      mask = torch.tensor(state["action_mask"], dtype=torch.float32, device=device)
+      flattened_mask = mask.flatten().unsqueeze(0)
+      masked_result = torch.where(flattened_mask == 1, netResult, torch.tensor(-float('inf')))
+      return masked_result.max(1).indices.view(1,1).squeeze(0)

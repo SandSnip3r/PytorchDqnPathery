@@ -47,10 +47,10 @@ def main():
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
   EXPLORATION_FINAL_EPS = 0.05
-  EXPLORATION_FRACTION = 0.02
-  TAU = 0.95 # 0.005
+  EXPLORATION_FRACTION = 0.1
+  TAU = 1 # 0.005
   LR = 1e-4
-  TARGET_UPDATE_INTERVAL = 1000
+  TARGET_UPDATE_INTERVAL = 10000
   RUNNING_AVERAGE_LENGTH = 100
   TRAIN_FREQUENCY = 4
 
@@ -67,23 +67,6 @@ def main():
   def calculateExplorationEpsilon(action_index, total_action_count):
     progress = action_index / total_action_count
     return EXPLORATION_INITIAL_EPS + (EXPLORATION_FINAL_EPS-EXPLORATION_INITIAL_EPS) * (min(progress, EXPLORATION_FRACTION) / EXPLORATION_FRACTION)
-
-  def select_action(state, eps_threshold, deterministic=False):
-    explore = False
-    if not deterministic:
-      sample = random.random()
-      explore = sample <= eps_threshold
-    if explore:
-      return torch.tensor([env.action_space.sample()], device=device, dtype=torch.long)
-    else:
-      with torch.no_grad():
-        # t.max(1) will return the largest column value of each row.
-        # second column on max result is index of where max element was
-        # found, so we pick action with the larger expected reward.
-        observationAsTensor = common.observationToTensor(state, device)
-        netResult = policy_net(observationAsTensor)
-        # TODO: Apply mask here to netResult
-        return netResult.max(1).indices.view(1,1).squeeze(0)
 
   def optimize_model():
     if len(memory) < BATCH_SIZE:
@@ -134,13 +117,13 @@ def main():
     # In-place gradient clipping
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
-    
+
   def calculateDeterministicReward():
     done = False
     observation, info = env.reset()
     episodeReward = 0
     while not done:
-      action = select_action(observation, eps_threshold=None, deterministic=True)
+      action = common.select_action(env, observation, policy_net, device, eps_threshold=None, deterministic=True)
       observation, reward, terminated, truncated, _ = env.step(action.item())
       episodeReward += reward
       done = terminated
@@ -160,7 +143,7 @@ def main():
     eps_threshold = calculateExplorationEpsilon(action_index, total_action_count)
     writer.add_scalar("Epsilon", eps_threshold, action_index)
 
-    action = select_action(state, eps_threshold)
+    action = common.select_action(env, state, policy_net, device, eps_threshold)
     observation, reward, terminated, truncated, _ = env.step(action.item())
     reward = torch.tensor([reward], device=device)
     done = terminated or truncated
