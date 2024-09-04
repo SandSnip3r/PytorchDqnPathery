@@ -27,7 +27,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-v0', render_mode='ansi')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.14.Normal...1725422400:,r3.8,r1.6,f1.,r3.15,f1.,s1.3,r1.5,r1.5,f1.,r3.15,f1.,r3.8,c2.6,f1.,r3.3,r1.4,r1.6,f1.,r3.,r1.8,c1.5,f1.,r3.2,r1.3,r1.,r1.7,f1.,r3.1,r1.13,f1.')
 
   class FlattenActionWrapper(gym.Wrapper):
     def __init__(self, env):

@@ -42,24 +42,29 @@ def main():
   # EXPLORATION_FINAL_EPS is the final value of epsilon
   # EXPLORATION_FRACTION specifies at what point in training does exploration reach the final value
   # TAU is the update rate of the target network
-  # LR is the learning rate of the ``AdamW`` optimizer
+  # LEARNING_RATE is the learning rate of the ``AdamW`` optimizer
   BATCH_SIZE = 256
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
   EXPLORATION_FINAL_EPS = 0.05
   EXPLORATION_FRACTION = 0.1
   TAU = 1 # 0.005
-  LR = 1e-4
+  LEARNING_RATE = 1e-4
+  # Number of actions per copy of policy->target
   TARGET_UPDATE_INTERVAL = 10000
-  RUNNING_AVERAGE_LENGTH = 100
+  # Number of actions to take per optimize_model() call
   TRAIN_FREQUENCY = 4
+  # Sample count for statistics
+  RUNNING_AVERAGE_LENGTH = 32
+  # Number of actions per evalutation
+  EVAL_FREQUENCY = 1000
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
   target_net = torch.jit.script(common.convFromEnv(env).to(device))
   print(f'Policy net: {policy_net}')
   target_net.load_state_dict(policy_net.state_dict())
 
-  optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
+  optimizer = optim.AdamW(policy_net.parameters(), lr=LEARNING_RATE, amsgrad=True)
   memory = ReplayMemory(100000)
 
   writer = SummaryWriter()
@@ -118,18 +123,20 @@ def main():
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
 
-  def calculateDeterministicReward():
+  def evalModel():
     done = False
     observation, info = env.reset()
     episodeReward = 0
+    stepCount = 0
     while not done:
       action = common.select_action(env, observation, policy_net, device, eps_threshold=None, deterministic=True)
       observation, reward, terminated, truncated, _ = env.step(action.item())
       episodeReward += reward
+      stepCount += 1
       done = terminated
-    return episodeReward
+    return stepCount, episodeReward
 
-  total_action_count = 50_000
+  total_action_count = 300_000
 
   episodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   episodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
@@ -139,6 +146,7 @@ def main():
   episodeReward = 0
   episodeStepIndex = 0
   episode_index = 0
+  needToEval = False
   for action_index in range(total_action_count):
     eps_threshold = calculateExplorationEpsilon(action_index, total_action_count)
     writer.add_scalar("Epsilon", eps_threshold, action_index)
@@ -174,12 +182,18 @@ def main():
         target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
       target_net.load_state_dict(target_net_state_dict)
 
+    if (action_index+1) % EVAL_FREQUENCY == 0:
+      needToEval = True
+
     if done:
-      episodeRewardRunningAverage.add(calculateDeterministicReward())
-      episodeLengthRunningAverage.add(episodeStepIndex+1)
-      writer.add_scalar("Episode_reward", episodeRewardRunningAverage.average(), action_index)
-      writer.add_scalar("Episode_length", episodeLengthRunningAverage.average(), action_index)
-      if episode_index % 100 == 0:
+      if needToEval:
+        length, reward = evalModel()
+        episodeLengthRunningAverage.add(length)
+        episodeRewardRunningAverage.add(reward)
+        writer.add_scalar("Episode_reward", episodeRewardRunningAverage.average(), action_index)
+        writer.add_scalar("Episode_length", episodeLengthRunningAverage.average(), action_index)
+        needToEval = False
+      if (episode_index+1) % 100 == 0:
         print(f'Episode {episode_index} complete')
       episode_index += 1
       episodeReward = 0
