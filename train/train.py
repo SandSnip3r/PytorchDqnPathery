@@ -43,17 +43,17 @@ def main():
   # EXPLORATION_FRACTION specifies at what point in training does exploration reach the final value
   # TAU is the update rate of the target network
   # LEARNING_RATE is the learning rate of the ``AdamW`` optimizer
-  BATCH_SIZE = 256
+  BATCH_SIZE = 64
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
   EXPLORATION_FINAL_EPS = 0.05
   EXPLORATION_FRACTION = 0.1
-  TAU = 1 # 0.005
+  TAU = 0.95 # 0.005
   LEARNING_RATE = 1e-4
   # Number of actions per copy of policy->target
-  TARGET_UPDATE_INTERVAL = 10000
+  TARGET_UPDATE_INTERVAL = 1000
   # Number of actions to take per optimize_model() call
-  TRAIN_FREQUENCY = 4
+  TRAIN_FREQUENCY = 1
   # Sample count for statistics
   RUNNING_AVERAGE_LENGTH = 32
   # Number of actions per evalutation
@@ -90,9 +90,9 @@ def main():
     # (a final state would've been the one after which simulation ended)
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)), device=device, dtype=torch.bool)
-    non_final_next_states = torch.cat([common.observationToTensor(s, device).unsqueeze(0) for s in batch.next_state
+    non_final_next_states = torch.cat([common.observationToTensor(env, s, device).unsqueeze(0) for s in batch.next_state
                                                 if s is not None])
-    state_batch = torch.cat([common.observationToTensor(s, device).unsqueeze(0) for s in batch.state])
+    state_batch = torch.cat([common.observationToTensor(env, s, device).unsqueeze(0) for s in batch.state])
     action_batch = torch.cat(batch.action).unsqueeze(1)
     reward_batch = torch.cat(batch.reward)
 
@@ -136,10 +136,10 @@ def main():
       done = terminated
     return stepCount, episodeReward
 
-  total_action_count = 300_000
+  total_action_count = 600_000
 
-  episodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
-  episodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
+  trainEpisodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
+  trainEpisodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
 
   # Initialize the environment and get its state
   state, info = env.reset()
@@ -186,12 +186,14 @@ def main():
       needToEval = True
 
     if done:
+      trainEpisodeLengthRunningAverage.add(episodeStepIndex)
+      trainEpisodeRewardRunningAverage.add(episodeReward)
+      writer.add_scalar("train/episode_reward", trainEpisodeRewardRunningAverage.average(), action_index)
+      writer.add_scalar("train/episode_length", trainEpisodeLengthRunningAverage.average(), action_index)
       if needToEval:
         length, reward = evalModel()
-        episodeLengthRunningAverage.add(length)
-        episodeRewardRunningAverage.add(reward)
-        writer.add_scalar("Episode_reward", episodeRewardRunningAverage.average(), action_index)
-        writer.add_scalar("Episode_length", episodeLengthRunningAverage.average(), action_index)
+        writer.add_scalar("eval/episode_reward", reward, action_index)
+        writer.add_scalar("eval/episode_length", length, action_index)
         needToEval = False
       if (episode_index+1) % 100 == 0:
         print(f'Episode {episode_index} complete')
