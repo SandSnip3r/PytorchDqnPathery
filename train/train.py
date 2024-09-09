@@ -1,18 +1,18 @@
-import gymnasium as gym
-import pathery_env
-import math
-import random
-import numpy as np
-from collections import namedtuple, deque
-from itertools import count
-from torch.utils.tensorboard import SummaryWriter
-import torch.profiler
-from common import common
 
+import gymnasium as gym
+import numpy as np
+import random
+import time
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
+import torch.optim as optim
+import torch.profiler
+
+from collections import namedtuple, deque
+from common import common
+from itertools import count
+from torch.utils.tensorboard import SummaryWriter
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -76,10 +76,11 @@ def main():
   def optimize_model():
     if len(memory) < BATCH_SIZE:
       return
+    # Get a list of Transitions
     transitions = memory.sample(BATCH_SIZE)
     # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
     # detailed explanation). This converts batch-array of Transitions
-    # to Transition of batch-arrays.
+    # to Transition of batch-arrays (specifically, they're tuples).
     batch = Transition(*zip(*transitions))
 
     if all(s is None for s in batch.next_state):
@@ -88,12 +89,11 @@ def main():
 
     # Compute a mask of non-final states and concatenate the batch elements
     # (a final state would've been the one after which simulation ended)
-    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+    non_final_mask = torch.tensor(tuple(map(lambda s: [s is not None],
                                           batch.next_state)), device=device, dtype=torch.bool)
-    non_final_next_states = torch.cat([common.observationToTensor(env, s, device).unsqueeze(0) for s in batch.next_state
-                                                if s is not None])
-    state_batch = torch.cat([common.observationToTensor(env, s, device).unsqueeze(0) for s in batch.state])
-    action_batch = torch.cat(batch.action).unsqueeze(1)
+    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+    state_batch = torch.cat(batch.state)
+    action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
 
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
@@ -106,7 +106,7 @@ def main():
     # on the "older" target_net; selecting their best reward with max(1).values
     # This is merged based on the mask, such that we'll have either the expected
     # state value or 0 in case the state was final.
-    next_state_values = torch.zeros(BATCH_SIZE, device=device)
+    next_state_values = torch.zeros((BATCH_SIZE,1), device=device)
     with torch.no_grad():
       next_state_values[non_final_mask] = target_net(non_final_next_states).max(1).values
     # Compute the expected Q values
@@ -114,7 +114,7 @@ def main():
 
     # Compute Huber loss
     criterion = nn.SmoothL1Loss()
-    loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+    loss = criterion(state_action_values, expected_state_action_values)
 
     # Optimize the model
     optimizer.zero_grad()
@@ -126,62 +126,73 @@ def main():
   def evalModel():
     done = False
     observation, info = env.reset()
+    observationTensor = common.observationToTensor(env, observation, device)
     episodeReward = 0
     stepCount = 0
     while not done:
-      action = common.select_action(env, observation, policy_net, device, eps_threshold=None, deterministic=True)
-      observation, reward, terminated, truncated, _ = env.step(action.item())
+      actionTensor = common.select_action(env, observationTensor, policy_net, device, eps_threshold=None, deterministic=True)
+      observation, reward, terminated, truncated, _ = env.step(actionTensor.item())
+      observationTensor = common.observationToTensor(env, observation, device)
       episodeReward += reward
       stepCount += 1
       done = terminated
     return stepCount, episodeReward
 
+  def updateTarget():
+    print(f'Updating target network (episode #{episode_index}, action #{action_index})')
+    # Soft update of the target network's weights
+    # θ′ ← τ θ + (1 −τ )θ′
+    target_net_state_dict = target_net.state_dict()
+    policy_net_state_dict = policy_net.state_dict()
+    for key in policy_net_state_dict:
+      target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+    target_net.load_state_dict(target_net_state_dict)
+
   total_action_count = 600_000
 
   trainEpisodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   trainEpisodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
+  fpsRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
 
   # Initialize the environment and get its state
   state, info = env.reset()
+  stateTensor = common.observationToTensor(env, state, device)
   episodeReward = 0.0
   episodeStepIndex = 0
   episode_index = 0
   needToEval = False
   bestEvalReward = 0
   for action_index in range(total_action_count):
+    # Start timing of action step
+    actionStartTime = time.perf_counter_ns()
+
+    # Calculate and log current epsilon
     eps_threshold = calculateExplorationEpsilon(action_index, total_action_count)
     writer.add_scalar("Epsilon", eps_threshold, action_index)
 
-    action = common.select_action(env, state, policy_net, device, eps_threshold)
-    observation, reward, terminated, truncated, _ = env.step(action.item())
-    reward = torch.tensor([reward], device=device)
+    actionTensor = common.select_action(env, stateTensor, policy_net, device, eps_threshold)
+    observation, reward, terminated, truncated, _ = env.step(actionTensor.item())
     done = terminated or truncated
     episodeReward += reward
 
     if terminated:
-      next_state = None
+      nextStateTensor = None
     else:
-      next_state = observation
+      nextStateTensor = common.observationToTensor(env, observation, device)
 
     # Store the transition in memory
-    memory.push(state, action, next_state, reward)
+    rewardTensor = torch.tensor([reward], device=device).unsqueeze(0)
+    memory.push(stateTensor, actionTensor, nextStateTensor, rewardTensor)
 
     # Move to the next state
-    state = next_state
+    stateTensor = nextStateTensor
 
     if (action_index+1) % TRAIN_FREQUENCY == 0:
       # Perform one step of the optimization (on the policy network)
       optimize_model()
 
     if (action_index+1) % TARGET_UPDATE_INTERVAL == 0:
-      print(f'Updating target network (episode #{episode_index}, action #{action_index})')
-      # Soft update of the target network's weights
-      # θ′ ← τ θ + (1 −τ )θ′
-      target_net_state_dict = target_net.state_dict()
-      policy_net_state_dict = policy_net.state_dict()
-      for key in policy_net_state_dict:
-        target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
-      target_net.load_state_dict(target_net_state_dict)
+      updateTarget()
 
     if (action_index+1) % EVAL_FREQUENCY == 0:
       needToEval = True
@@ -192,23 +203,27 @@ def main():
       writer.add_scalar("train/episode_reward", trainEpisodeRewardRunningAverage.average(), action_index)
       writer.add_scalar("train/episode_length", trainEpisodeLengthRunningAverage.average(), action_index)
       if needToEval:
-        length, reward = evalModel()
-        writer.add_scalar("eval/episode_reward", reward, action_index)
-        writer.add_scalar("eval/episode_length", length, action_index)
+        evalLength, evalReward = evalModel()
+        writer.add_scalar("eval/episode_reward", evalReward, action_index)
+        writer.add_scalar("eval/episode_length", evalLength, action_index)
         needToEval = False
-        if reward > bestEvalReward:
+        if evalReward > bestEvalReward:
           # Each time the model does better, save it.
-          policy_net.save(f'best_{reward}.pt')
-          bestEvalReward = reward
+          policy_net.save(f'best_{evalReward}.pt')
+          bestEvalReward = evalReward
       if (episode_index+1) % 100 == 0:
         print(f'Episode {episode_index} complete')
       episode_index += 1
       episodeReward = 0.0
       episodeStepIndex = 0
       state, info = env.reset()
-      continue
+      stateTensor = common.observationToTensor(env, state, device)
+    else:
+      episodeStepIndex += 1
 
-    episodeStepIndex += 1
+    actionEndTime = time.perf_counter_ns()
+    fpsRunningAverage.add(1.0e9 / (actionEndTime-actionStartTime))
+    writer.add_scalar("fps", fpsRunningAverage.average(), action_index)
 
   policy_net.save('policy_net_script.pt')
 
