@@ -37,12 +37,16 @@ def main():
   print(f'Using device {device}')
 
   # BATCH_SIZE is the number of transitions sampled from the replay buffer
-  # GAMMA is the discount factor as mentioned in the previous section
+  # GAMMA is the discount factor
   # EXPLORATION_INITIAL_EPS is the starting value of epsilon
   # EXPLORATION_FINAL_EPS is the final value of epsilon
-  # EXPLORATION_FRACTION specifies at what point in training does exploration reach the final value
+  # EXPLORATION_FRACTION specifies at what point in training exploration reaches the final value
   # TAU is the update rate of the target network
   # LEARNING_RATE is the learning rate of the ``AdamW`` optimizer
+  # TARGET_UPDATE_INTERVAL is the number of actions per copy of policy->target
+  # TRAIN_FREQUENCY is the number of actions to take per optimize_model() call
+  # RUNNING_AVERAGE_LENGTH is the sample count for statistics
+  # EVAL_FREQUENCY is the number of actions per evalutation
   BATCH_SIZE = 64
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
@@ -50,13 +54,9 @@ def main():
   EXPLORATION_FRACTION = 0.1
   TAU = 0.95 # 0.005
   LEARNING_RATE = 1e-4
-  # Number of actions per copy of policy->target
   TARGET_UPDATE_INTERVAL = 1000
-  # Number of actions to take per optimize_model() call
   TRAIN_FREQUENCY = 1
-  # Sample count for statistics
   RUNNING_AVERAGE_LENGTH = 32
-  # Number of actions per evalutation
   EVAL_FREQUENCY = 1000
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
@@ -143,10 +143,11 @@ def main():
 
   # Initialize the environment and get its state
   state, info = env.reset()
-  episodeReward = 0
+  episodeReward = 0.0
   episodeStepIndex = 0
   episode_index = 0
   needToEval = False
+  bestEvalReward = 0
   for action_index in range(total_action_count):
     eps_threshold = calculateExplorationEpsilon(action_index, total_action_count)
     writer.add_scalar("Epsilon", eps_threshold, action_index)
@@ -195,10 +196,14 @@ def main():
         writer.add_scalar("eval/episode_reward", reward, action_index)
         writer.add_scalar("eval/episode_length", length, action_index)
         needToEval = False
+        if reward > bestEvalReward:
+          # Each time the model does better, save it.
+          policy_net.save(f'best_{reward}.pt')
+          bestEvalReward = reward
       if (episode_index+1) % 100 == 0:
         print(f'Episode {episode_index} complete')
       episode_index += 1
-      episodeReward = 0
+      episodeReward = 0.0
       episodeStepIndex = 0
       state, info = env.reset()
       continue
