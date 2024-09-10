@@ -27,9 +27,6 @@ def main(model_path):
   print(env.render())
   print(f'Initial info: {info}')
 
-  res = policy_net(observationTensor)
-  print(res)
-
   done = False
 
   while not done:
