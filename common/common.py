@@ -1,7 +1,6 @@
 from collections import deque
 import gymnasium as gym
 import numpy as np
-import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,7 +29,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.14.Normal...1725768000:,r3.15,f1.,r3.6,r1.4,r1.3,f1.,r3.6,r1.3,r1.1,r1.,r1.1,f1.,r3.15,f1.,r3.1,r1.3,r1.1,r1.7,f1.,s1.1,r1.13,f1.,r3.5,r1.9,f1.,r3.6,c1.8,f1.,r3.,r1.2,c2.11,f1.')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.12.Normal...1726027200:,r3.,r1.4,r1.3,r1.5,f1.,r3.3,r1.3,r1.1,r1.5,f1.,s1.9,r1.5,f1.,r3.15,f1.,r3.2,c2.1,r1.8,c1.1,f1.,r3.2,r1.11,r1.,f1.,r3.,r1.14,f1.,r3.10,r1.4,f1.,r3.7,r1.3,r1.3,f1.')
 
   env = FlattenActionWrapper(env)
   return ConvolutionObservationWrapper(env) # For Conv
@@ -134,7 +133,7 @@ def select_action(env, stateTensor, policy_net, device, eps_threshold, useMask=F
   """Returns the action as a pytorch tensor on the specified device with the batch dimension added"""
   explore = False
   if not deterministic:
-    explore = random.random() <= eps_threshold
+    explore = np.random.random() <= eps_threshold
   if explore:
     if False: # TODO: Action masking branch
       mask = stateTensor['action_mask'].flatten()

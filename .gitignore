@@ -2,3 +2,4 @@ runs/*
 *.pt
 experiments.md
 */__pycache__/*
+reward_experiment_runs/*

@@ -1,17 +1,14 @@
 
-import gymnasium as gym
 import numpy as np
 import random
 import time
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 import torch.profiler
 
 from collections import namedtuple, deque
 from common import common
-from itertools import count
 from torch.utils.tensorboard import SummaryWriter
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
@@ -31,10 +28,39 @@ class ReplayMemory(object):
   def __len__(self):
     return len(self.memory)
 
+def set_seed(seed, env):
+  # For Python's random module
+  random.seed(seed)
+  
+  # For NumPy's random module
+  np.random.seed(seed)
+  
+  # For PyTorch (CPU)
+  torch.manual_seed(seed)
+  
+  # For PyTorch (GPU)
+  if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+
+  # Ensure deterministic behavior in PyTorch (optional, but can slow down training)
+  torch.backends.cudnn.deterministic = True
+  torch.backends.cudnn.benchmark = False
+  torch.use_deterministic_algorithms(True)
+
+  # Seed the environment
+  env.action_space.seed(seed)
+  env.reset(seed=seed)
+
 def main():
-  env = common.getEnv()
   device = common.getDevice()
   print(f'Using device {device}')
+
+  env = common.getEnv()
+
+  # Seed the random number generation
+  INITIAL_SEED = 123
+  set_seed(INITIAL_SEED, env)
 
   # BATCH_SIZE is the number of transitions sampled from the replay buffer
   # GAMMA is the discount factor
