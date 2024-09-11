@@ -53,6 +53,21 @@ def set_seed(seed, env, determinism=False):
     torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True)
 
+def getStateSamples(env, stateCount, device):
+  """Collects a set of states via random actions for later evaluation."""
+  actionSpace = env.action_space
+  observation, _ = env.reset()
+  result = [common.observationToTensor(env, observation, device)]
+  for i in range(stateCount-1):
+    action = actionSpace.sample()
+    observation, _, terminated, truncated, _ = env.step(action)
+    result.append(common.observationToTensor(env, observation, device))
+    if terminated or truncated:
+      # Since we're not usually working with random environments, do not add the starting state again
+      env.reset()
+
+  return torch.cat(result)
+
 def main():
   device = common.getDevice()
   print(f'Using device {device}')
@@ -85,6 +100,8 @@ def main():
   TRAIN_FREQUENCY = 1
   RUNNING_AVERAGE_LENGTH = 32
   EVAL_FREQUENCY = 1000
+  STATE_SAMPLE_COUNT = 512
+  DOUBLE_DQN = True
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
   target_net = torch.jit.script(common.convFromEnv(env).to(device))
@@ -93,6 +110,8 @@ def main():
 
   optimizer = optim.AdamW(policy_net.parameters(), lr=LEARNING_RATE, amsgrad=True)
   memory = ReplayMemory(100000)
+
+  stateSamples = getStateSamples(env, STATE_SAMPLE_COUNT, device)
 
   writer = SummaryWriter()
 
@@ -135,7 +154,18 @@ def main():
     # state value or 0 in case the state was final.
     next_state_values = torch.zeros((BATCH_SIZE,1), device=device)
     with torch.no_grad():
-      next_state_values[non_final_mask] = target_net(non_final_next_states).max(1).values
+      if DOUBLE_DQN:
+        # Double DQN
+        qValues = policy_net(non_final_next_states)
+        maxQValue = qValues.max(1)
+        actions = maxQValue.indices
+        targetQValues = target_net(non_final_next_states)
+        targetActionValues = targetQValues.gather(1, actions.unsqueeze(1))
+        next_state_values[non_final_mask] = targetActionValues.squeeze(1)
+      else:
+        # Traditional DQN
+        next_state_values[non_final_mask] = target_net(non_final_next_states).max(1).values
+
     # Compute the expected Q values
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
@@ -150,7 +180,8 @@ def main():
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
 
-  def evalModel():
+  def evalModel(env, policy_net, stateSamples, action_index, writer, device):
+    # Deterministically use the model to play one episode. Log the length & reward.
     done = False
     observation, info = env.reset()
     observationTensor = common.observationToTensor(env, observation, device)
@@ -163,7 +194,16 @@ def main():
       episodeReward += reward
       stepCount += 1
       done = terminated
-    return stepCount, episodeReward
+
+    writer.add_scalar("eval/episode_reward", episodeReward, action_index)
+    writer.add_scalar("eval/episode_length", stepCount, action_index)
+
+    # Use the evaluation metric mentioned in the DQN paper
+    with torch.no_grad():
+      meanQValue = policy_net(stateSamples).max(1).values.mean()
+    writer.add_scalar("eval/mean_max_q_value", meanQValue, action_index)
+
+    return episodeReward
 
   def updateTarget():
     print(f'Updating target network (episode #{episode_index}, action #{action_index})')
@@ -230,9 +270,7 @@ def main():
       writer.add_scalar("train/episode_reward", trainEpisodeRewardRunningAverage.average(), action_index)
       writer.add_scalar("train/episode_length", trainEpisodeLengthRunningAverage.average(), action_index)
       if needToEval:
-        evalLength, evalReward = evalModel()
-        writer.add_scalar("eval/episode_reward", evalReward, action_index)
-        writer.add_scalar("eval/episode_length", evalLength, action_index)
+        evalReward = evalModel(env, policy_net, stateSamples, action_index, writer, device)
         needToEval = False
         if evalReward > bestEvalReward:
           # Each time the model does better, save it.

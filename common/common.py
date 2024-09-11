@@ -29,7 +29,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.12.Normal...1726027200:,r3.,r1.4,r1.3,r1.5,f1.,r3.3,r1.3,r1.1,r1.5,f1.,s1.9,r1.5,f1.,r3.15,f1.,r3.2,c2.1,r1.8,c1.1,f1.,r3.2,r1.11,r1.,f1.,r3.,r1.14,f1.,r3.10,r1.4,f1.,r3.7,r1.3,r1.3,f1.')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='13.6.6.Simple...1726113600:,s1.11,r3.,r3.11,f1.,r3.11,r3.,r3.3,r1.3,r1.3,r3.,r3.2,c1.2,r1.5,r3.,r3.4,r1.2,r1.3,r3.')
 
   env = FlattenActionWrapper(env)
   return ConvolutionObservationWrapper(env) # For Conv
