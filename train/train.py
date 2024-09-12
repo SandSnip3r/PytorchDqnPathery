@@ -98,10 +98,11 @@ def main():
   LEARNING_RATE = 1e-4
   TARGET_UPDATE_INTERVAL = 1000
   TRAIN_FREQUENCY = 1
-  RUNNING_AVERAGE_LENGTH = 32
+  RUNNING_AVERAGE_LENGTH = 128
   EVAL_FREQUENCY = 1000
   STATE_SAMPLE_COUNT = 512
   DOUBLE_DQN = True
+  TOTAL_ACTION_COUNT = 500_000
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
   target_net = torch.jit.script(common.convFromEnv(env).to(device))
@@ -115,8 +116,8 @@ def main():
 
   writer = SummaryWriter()
 
-  def calculateExplorationEpsilon(action_index, total_action_count):
-    progress = action_index / total_action_count
+  def calculateExplorationEpsilon(action_index):
+    progress = action_index / TOTAL_ACTION_COUNT
     return EXPLORATION_INITIAL_EPS + (EXPLORATION_FINAL_EPS-EXPLORATION_INITIAL_EPS) * (min(progress, EXPLORATION_FRACTION) / EXPLORATION_FRACTION)
 
   def optimize_model():
@@ -215,7 +216,6 @@ def main():
       target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
     target_net.load_state_dict(target_net_state_dict)
 
-  total_action_count = 600_000
 
   trainEpisodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   trainEpisodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
@@ -229,12 +229,12 @@ def main():
   episode_index = 0
   needToEval = False
   bestEvalReward = 0
-  for action_index in range(total_action_count):
+  for action_index in range(TOTAL_ACTION_COUNT):
     # Start timing of action step
     actionStartTime = time.perf_counter_ns()
 
     # Calculate and log current epsilon
-    eps_threshold = calculateExplorationEpsilon(action_index, total_action_count)
+    eps_threshold = calculateExplorationEpsilon(action_index)
     writer.add_scalar("Epsilon", eps_threshold, action_index)
 
     actionTensor = common.select_action(env, stateTensor, policy_net, device, eps_threshold)
