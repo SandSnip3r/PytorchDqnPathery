@@ -96,7 +96,7 @@ def main():
   EXPLORATION_FRACTION = 0.1
   TAU = 0.95 # 0.005
   LEARNING_RATE = 1e-4
-  TARGET_UPDATE_INTERVAL = 1000
+  TARGET_UPDATE_INTERVAL = 10000
   TRAIN_FREQUENCY = 1
   RUNNING_AVERAGE_LENGTH = 128
   EVAL_FREQUENCY = 1000
@@ -157,12 +157,10 @@ def main():
     with torch.no_grad():
       if DOUBLE_DQN:
         # Double DQN
-        qValues = policy_net(non_final_next_states)
-        maxQValue = qValues.max(1)
-        actions = maxQValue.indices
-        targetQValues = target_net(non_final_next_states)
-        targetActionValues = targetQValues.gather(1, actions.unsqueeze(1))
-        next_state_values[non_final_mask] = targetActionValues.squeeze(1)
+        # Action selection using the online network (policy_net)
+        next_state_actions = policy_net(non_final_next_states).max(1).indices
+        # Action evaluation using the target network (target_net)
+        next_state_values[non_final_mask] = target_net(non_final_next_states).gather(1, next_state_actions.unsqueeze(1)).squeeze(1)
       else:
         # Traditional DQN
         next_state_values[non_final_mask] = target_net(non_final_next_states).max(1).values
@@ -215,7 +213,6 @@ def main():
     for key in policy_net_state_dict:
       target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
     target_net.load_state_dict(target_net_state_dict)
-
 
   trainEpisodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   trainEpisodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
