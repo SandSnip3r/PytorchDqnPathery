@@ -4,8 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pathery_env.wrappers.convolution_observation import ConvolutionObservationWrapper
 from pathery_env.wrappers.flatten_action import FlattenActionWrapper
+from pathery_env.wrappers.flatten_board_observation import FlattenBoardObservationWrapper
 from pathery_env.envs.pathery import PatheryEnv
 
 class RunningAverage:
@@ -29,11 +29,11 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='13.6.6.Simple...1726113600:,s1.11,r3.,r3.11,f1.,r3.11,r3.,r3.3,r1.3,r1.3,r3.,r3.2,c1.2,r1.5,r3.,r3.4,r1.2,r1.3,r3.')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='8.8.8.Simple...1726718400:,s1.2,r1.17,r1.2,r1.14,r1.2,r1.17,r1.2,f1.')
 
   env = FlattenActionWrapper(env)
-  return ConvolutionObservationWrapper(env) # For Conv
-  # return env # For Dense
+  # env = FlattenBoardObservationWrapper(env) # Uncomment for dense NN
+  return env
 
 class DenseDQN(nn.Module):
 
@@ -111,16 +111,11 @@ def denseFromEnv(env):
 
 def convFromEnv(env):
   n_actions = int(env.action_space.n)
-  return ConvDQN(int(env.channel_count), env.height, env.width, n_actions)
+  return ConvDQN(*env.observation_space[PatheryEnv.OBSERVATION_BOARD_STR].shape, n_actions)
 
 def observationToTensor(env, obs, device):
   """Returns the observation as a pytorch tensor on the specified device with the batch dimension added"""
-  if isWrappedBy(env, ConvolutionObservationWrapper):
-    return torch.tensor(obs[PatheryEnv.OBSERVATION_BOARD_STR], dtype=torch.float32, device=device).unsqueeze(0)
-  else:
-    # Need to flatten
-    flattened = gym.spaces.utils.flatten(env.observation_space[PatheryEnv.OBSERVATION_BOARD_STR], obs[PatheryEnv.OBSERVATION_BOARD_STR])
-    return torch.tensor(flattened, dtype=torch.float32, device=device).unsqueeze(0)
+  return torch.tensor(obs[PatheryEnv.OBSERVATION_BOARD_STR], dtype=torch.float32, device=device).unsqueeze(0)
 
 def getDevice():
   return torch.device(
