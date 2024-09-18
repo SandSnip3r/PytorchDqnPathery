@@ -97,12 +97,12 @@ def main():
   TAU = 0.95 # 0.005
   LEARNING_RATE = 1e-4
   TARGET_UPDATE_INTERVAL = 10000
-  TRAIN_FREQUENCY = 1
+  TRAIN_FREQUENCY = 4
   RUNNING_AVERAGE_LENGTH = 128
   EVAL_FREQUENCY = 1000
   STATE_SAMPLE_COUNT = 512
   DOUBLE_DQN = True
-  TOTAL_ACTION_COUNT = 500_000
+  TOTAL_ACTION_COUNT = 100_000
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
   target_net = torch.jit.script(common.convFromEnv(env).to(device))
@@ -142,6 +142,7 @@ def main():
     state_batch = torch.cat(batch.state)
     action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
+    print(f'action_batch: {action_batch}')
 
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
     # columns of actions taken. These are the actions which would've been taken
@@ -235,7 +236,7 @@ def main():
     writer.add_scalar("Epsilon", eps_threshold, action_index)
 
     actionTensor = common.select_action(env, stateTensor, policy_net, device, eps_threshold)
-    observation, reward, terminated, truncated, _ = env.step(actionTensor.item())
+    observation, reward, terminated, truncated, _ = env.step(actionTensor)
     done = terminated or truncated
     episodeReward += reward
 
