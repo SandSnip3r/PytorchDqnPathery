@@ -142,7 +142,7 @@ def select_action(env, stateTensor, policy_net, device, eps_threshold, useMask=F
     else:
       # Any action sample is valid without masking
       action_index = env.action_space.sample()
-      return torch.tensor([[action_index]], device=device, dtype=torch.long)
+      return torch.tensor(np.expand_dims(action_index, 0), device=device, dtype=torch.long)
   else:
     with torch.no_grad():
       # t.max(1) will return the largest column value of each row.

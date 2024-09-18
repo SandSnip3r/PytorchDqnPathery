@@ -142,7 +142,6 @@ def main():
     state_batch = torch.cat(batch.state)
     action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
-    print(f'action_batch: {action_batch}')
 
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
     # columns of actions taken. These are the actions which would've been taken
@@ -189,7 +188,7 @@ def main():
     stepCount = 0
     while not done:
       actionTensor = common.select_action(env, observationTensor, policy_net, device, eps_threshold=None, deterministic=True)
-      observation, reward, terminated, truncated, _ = env.step(actionTensor.item())
+      observation, reward, terminated, truncated, _ = env.step(actionTensor)
       observationTensor = common.observationToTensor(env, observation, device)
       episodeReward += reward
       stepCount += 1
