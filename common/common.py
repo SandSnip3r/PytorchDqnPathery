@@ -30,8 +30,8 @@ class RunningAverage:
 
 def getEnv():
   mapString = '8.8.8.Simple...1726718400:,s1.2,r1.17,r1.2,r1.14,r1.2,r1.17,r1.2,f1.'
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string=mapString)
-  # env = gym.make_vec('pathery_env/Pathery-FromMapString', num_envs=2, vectorization_mode="sync", render_mode='ansi', map_string=mapString)
+  # env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string=mapString)
+  env = gym.make_vec('pathery_env/Pathery-FromMapString', num_envs=2, vectorization_mode="sync", render_mode='ansi', map_string=mapString)
 
   # env = FlattenActionWrapper(env)
   # env = FlattenBoardObservationWrapper(env) # Uncomment for dense NN
@@ -112,8 +112,9 @@ def denseFromEnv(env):
   return DenseDQN(n_observations, n_actions)
 
 def convFromEnv(env):
-  n_actions = int(env.action_space.high-env.action_space.low+1)
-  return ConvDQN(*env.observation_space[PatheryEnv.OBSERVATION_BOARD_STR].shape, n_actions)
+  # TODO: Handle both vectorized and non-vectorized envs, right now we're hardcoded assuming that it's vectorized
+  n_actions = int(env.single_action_space.high-env.single_action_space.low+1)
+  return ConvDQN(*env.single_observation_space[PatheryEnv.OBSERVATION_BOARD_STR].shape, n_actions)
 
 def observationToTensor(env, obs, device):
   """Returns the observation as a pytorch tensor on the specified device with the batch dimension added"""
@@ -142,7 +143,9 @@ def select_action(env, stateTensor, policy_net, device, eps_threshold, useMask=F
     else:
       # Any action sample is valid without masking
       action_index = env.action_space.sample()
-      return torch.tensor(np.expand_dims(action_index, 0), device=device, dtype=torch.long)
+      res = torch.tensor(action_index, device=device, dtype=torch.long)
+      print(f'[Sample] Returning {res}')
+      return res
   else:
     with torch.no_grad():
       # t.max(1) will return the largest column value of each row.
@@ -156,4 +159,6 @@ def select_action(env, stateTensor, policy_net, device, eps_threshold, useMask=F
         masked_result = torch.where(flattened_mask == 1, netResult, torch.tensor(-float('inf')))
         return masked_result.max(1).indices.view(1,1).squeeze(0)
       else:
-        return netResult.max(1).indices.view(1,1)
+        res = netResult.max(1).indices.view(1,1)
+        print(f'[Net] Returning {res}')
+        return res

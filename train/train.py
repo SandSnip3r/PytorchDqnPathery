@@ -55,18 +55,22 @@ def set_seed(seed, env, determinism=False):
 
 def getStateSamples(env, stateCount, device):
   """Collects a set of states via random actions for later evaluation."""
+  callCount = int(stateCount / env.num_envs)
   actionSpace = env.action_space
   observation, _ = env.reset()
-  result = [common.observationToTensor(env, observation, device)]
-  for i in range(stateCount-1):
+  result = []
+  print(f'Going to try to get {callCount} batches of states')
+  for i in range(callCount):
     action = actionSpace.sample()
     observation, _, terminated, truncated, _ = env.step(action)
     result.append(common.observationToTensor(env, observation, device))
-    if terminated or truncated:
-      # Since we're not usually working with random environments, do not add the starting state again
-      env.reset()
-
-  return torch.cat(result)
+    # TODO: Because vectorized environments will automatically reset, we might have a lot of start states.
+    # if terminated or truncated:
+    #   # Since we're not usually working with random environments, do not add the starting state again
+    #   env.reset()
+  res = torch.cat(result)
+  print(f'Got {res.shape} of shapes')
+  return res
 
 def main():
   device = common.getDevice()
@@ -235,6 +239,7 @@ def main():
     writer.add_scalar("Epsilon", eps_threshold, action_index)
 
     actionTensor = common.select_action(env, stateTensor, policy_net, device, eps_threshold)
+    print(f'Calling step with {actionTensor}')
     observation, reward, terminated, truncated, _ = env.step(actionTensor)
     done = terminated or truncated
     episodeReward += reward
