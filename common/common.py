@@ -29,7 +29,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  mapString = '8.8.8.Simple...1726718400:,s1.2,r1.17,r1.2,r1.14,r1.2,r1.17,r1.2,f1.'
+  mapString = '6.2.8.Simple...1726718400:,s1.4,f1.'
   # env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string=mapString)
   env = gym.make_vec('pathery_env/Pathery-FromMapString', num_envs=2, vectorization_mode="sync", render_mode='ansi', map_string=mapString)
 
@@ -120,6 +120,13 @@ def observationToTensor(env, obs, device):
   """Returns the observation as a pytorch tensor on the specified device with the batch dimension added"""
   return torch.tensor(obs[PatheryEnv.OBSERVATION_BOARD_STR], dtype=torch.float32, device=device).unsqueeze(0)
 
+def vecObservationToTensors(env, observations, device):
+  """Returns the batch of observations as a list of pytorch tensors on the specified device with the batch dimension added"""
+  result = []
+  for board in observations[PatheryEnv.OBSERVATION_BOARD_STR]:
+    result.append(torch.tensor(board, dtype=torch.float32, device=device).unsqueeze(0))
+  return result
+
 def getDevice():
   return torch.device(
     "cuda" if torch.cuda.is_available() else
@@ -159,6 +166,44 @@ def select_action(env, stateTensor, policy_net, device, eps_threshold, useMask=F
         masked_result = torch.where(flattened_mask == 1, netResult, torch.tensor(-float('inf')))
         return masked_result.max(1).indices.view(1,1).squeeze(0)
       else:
+        res = netResult.max(1).indices.view(1,1)
+        print(f'[Net] Returning {res}')
+        return res
+
+def vecSelectActions(env, observationTensors, policyNet, device, epsilonThreshold, useMask=False, deterministic=False):
+  """Returns the actions as a list of pytorch tensors on the specified device with the batch dimension added"""
+  explore = False
+  if not deterministic:
+    explore = np.random.random() <= epsilonThreshold
+  if explore:
+    if False: # TODO: Action masking branch
+      mask = observationTensors['action_mask'].flatten()
+      # Sample actions until we get one which is valid according to the mask
+      while True:
+        action_index = env.action_space.sample()
+        if mask[action_index] == 1:
+          return torch.tensor([action_index], device=device, dtype=torch.long)
+    else:
+      # Any action sample is valid without masking
+      actions = env.action_space.sample()
+      actionTensors = []
+      for action in actions:
+        actionTensors.append(torch.tensor(action, device=device, dtype=torch.long))
+      return actionTensors
+  else:
+    with torch.no_grad():
+      # t.max(1) will return the largest column value of each row.
+      # second column on max result is index of where max element was
+      # found, so we pick action with the larger expected reward.
+      netResult = policyNet(observationTensors)
+      if False: # TODO: Action masking branch
+        # Apply action mask
+        mask = torch.tensor(observationTensors["action_mask"], dtype=torch.float32, device=device)
+        flattened_mask = mask.flatten().unsqueeze(0)
+        masked_result = torch.where(flattened_mask == 1, netResult, torch.tensor(-float('inf')))
+        return masked_result.max(1).indices.view(1,1).squeeze(0)
+      else:
+        print(f'Net result is {netResult}')
         res = netResult.max(1).indices.view(1,1)
         print(f'[Net] Returning {res}')
         return res

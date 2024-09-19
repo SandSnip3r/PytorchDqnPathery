@@ -10,6 +10,7 @@ import torch.profiler
 from collections import namedtuple, deque
 from common import common
 from torch.utils.tensorboard import SummaryWriter
+from pathery_env.envs.pathery import PatheryEnv
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -59,7 +60,6 @@ def getStateSamples(env, stateCount, device):
   actionSpace = env.action_space
   observation, _ = env.reset()
   result = []
-  print(f'Going to try to get {callCount} batches of states')
   for i in range(callCount):
     action = actionSpace.sample()
     observation, _, terminated, truncated, _ = env.step(action)
@@ -69,7 +69,6 @@ def getStateSamples(env, stateCount, device):
     #   # Since we're not usually working with random environments, do not add the starting state again
     #   env.reset()
   res = torch.cat(result)
-  print(f'Got {res.shape} of shapes')
   return res
 
 def main():
@@ -93,7 +92,7 @@ def main():
   # TRAIN_FREQUENCY is the number of actions to take per optimize_model() call
   # RUNNING_AVERAGE_LENGTH is the sample count for statistics
   # EVAL_FREQUENCY is the number of actions per evalutation
-  BATCH_SIZE = 64
+  BATCH_SIZE = 2
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
   EXPLORATION_FINAL_EPS = 0.05
@@ -133,6 +132,8 @@ def main():
     # detailed explanation). This converts batch-array of Transitions
     # to Transition of batch-arrays (specifically, they're tuples).
     batch = Transition(*zip(*transitions))
+
+    print(f'Batch: {batch}')
 
     if all(s is None for s in batch.next_state):
       # We require at least one next action for any model training
@@ -208,7 +209,7 @@ def main():
 
     return episodeReward
 
-  def updateTarget():
+  def updateTarget(episode_index):
     print(f'Updating target network (episode #{episode_index}, action #{action_index})')
     # Soft update of the target network's weights
     # θ′ ← τ θ + (1 −τ )θ′
@@ -218,18 +219,18 @@ def main():
       target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
     target_net.load_state_dict(target_net_state_dict)
 
-  trainEpisodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
-  trainEpisodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
+  # trainEpisodeRewardRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
+  # trainEpisodeLengthRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
   fpsRunningAverage = common.RunningAverage(RUNNING_AVERAGE_LENGTH)
 
   # Initialize the environment and get its state
-  state, info = env.reset()
-  stateTensor = common.observationToTensor(env, state, device)
-  episodeReward = 0.0
-  episodeStepIndex = 0
-  episode_index = 0
-  needToEval = False
-  bestEvalReward = 0
+  initialObservations, _ = env.reset()
+  currentObservationTensors = common.vecObservationToTensors(env, initialObservations, device)
+  # episodeReward = 0.0
+  # episodeStepIndex = 0
+  episode_index = 0 # TODO
+  # needToEval = False
+  # bestEvalReward = 0
   for action_index in range(TOTAL_ACTION_COUNT):
     # Start timing of action step
     actionStartTime = time.perf_counter_ns()
@@ -238,58 +239,80 @@ def main():
     eps_threshold = calculateExplorationEpsilon(action_index)
     writer.add_scalar("Epsilon", eps_threshold, action_index)
 
-    actionTensor = common.select_action(env, stateTensor, policy_net, device, eps_threshold)
-    print(f'Calling step with {actionTensor}')
-    observation, reward, terminated, truncated, _ = env.step(actionTensor)
-    done = terminated or truncated
-    episodeReward += reward
+    actionTensors = common.vecSelectActions(env, currentObservationTensors, policy_net, device, eps_threshold)
+    observations, rewards, vecTerminated, vecTruncated, infos = env.step(actionTensors)
+    # done = vecTerminated or vecTruncated
+    # episodeReward += rewards
 
-    if terminated:
-      nextStateTensor = None
+    # Since vectorized environments auto-reset, in order to create (S,A,R,S) tuples, we might need to look into the `info` to get the "final" observation of an auto-reset env.
+    finalObservationMaskKey = '_final_observation'
+    finalObservationKey = 'final_observation'
+    if finalObservationMaskKey in infos:
+      # There were some envs which were auto-reset
+      nextObservationTensors = []
+      for index, wasFinal in enumerate(infos[finalObservationMaskKey]):
+        if wasFinal:
+          nextObservationTensors.append(common.observationToTensor(env, infos[finalObservationKey][index], device))
+        else:
+          # Since vectorized environments' observations are a dict of arrays: un-dict, index into the array, then re-dict the single observation
+          boards = observations[PatheryEnv.OBSERVATION_BOARD_STR]
+          dictedBoard = { PatheryEnv.OBSERVATION_BOARD_STR: boards[index] }
+          nextObservationTensors.append(common.observationToTensor(env, dictedBoard, device))
     else:
-      nextStateTensor = common.observationToTensor(env, observation, device)
+      # No env reset, take all observations directly from `step` output
+      nextObservationTensors = common.vecObservationToTensors(env, observations, device)
 
-    # Store the transition in memory
-    rewardTensor = torch.tensor([reward], device=device).unsqueeze(0)
-    memory.push(stateTensor, actionTensor, nextStateTensor, rewardTensor)
+    # Turn the rewards into tensors
+    rewardTensors = []
+    for i in range(len(rewards)):
+      rewardTensors.append(torch.tensor(rewards[i:i+1], device=device))
+
+    # Make sure that all lists have the same length
+    lengths = {len(lst) for lst in [currentObservationTensors, actionTensors, nextObservationTensors, rewardTensors]}
+    if len(lengths) != 1:
+      raise ValueError(f'Mismatched lengths: {len(currentObservationTensors)}, {len(actionTensors)}, {len(nextObservationTensors)}, {len(rewardTensors)}')
+
+    # Store the transitions in memory
+    for i in range(len(currentObservationTensors)):
+      memory.push(currentObservationTensors[i], actionTensors[i], nextObservationTensors[i], rewardTensors[i])
 
     # Move to the next state
-    stateTensor = nextStateTensor
+    currentObservationTensors = nextObservationTensors
 
     if (action_index+1) % TRAIN_FREQUENCY == 0:
       # Perform one step of the optimization (on the policy network)
       optimize_model()
 
     if (action_index+1) % TARGET_UPDATE_INTERVAL == 0:
-      updateTarget()
+      updateTarget(episode_index)
 
     if (action_index+1) % EVAL_FREQUENCY == 0:
       needToEval = True
 
-    if done:
-      trainEpisodeLengthRunningAverage.add(episodeStepIndex)
-      trainEpisodeRewardRunningAverage.add(episodeReward)
-      writer.add_scalar("train/episode_reward", trainEpisodeRewardRunningAverage.average(), action_index)
-      writer.add_scalar("train/episode_length", trainEpisodeLengthRunningAverage.average(), action_index)
-      if needToEval:
-        evalReward = evalModel(env, policy_net, stateSamples, action_index, writer, device)
-        needToEval = False
-        if evalReward > bestEvalReward:
-          # Each time the model does better, save it.
-          policy_net.save(f'best_{evalReward}.pt')
-          bestEvalReward = evalReward
-      if (episode_index+1) % 100 == 0:
-        print(f'Episode {episode_index} complete')
-      episode_index += 1
-      episodeReward = 0.0
-      episodeStepIndex = 0
-      state, info = env.reset()
-      stateTensor = common.observationToTensor(env, state, device)
-    else:
-      episodeStepIndex += 1
+    # if done:
+    #   # trainEpisodeLengthRunningAverage.add(episodeStepIndex)
+    #   # trainEpisodeRewardRunningAverage.add(episodeReward)
+    #   writer.add_scalar("train/episode_reward", trainEpisodeRewardRunningAverage.average(), action_index)
+    #   writer.add_scalar("train/episode_length", trainEpisodeLengthRunningAverage.average(), action_index)
+    #   # if needToEval:
+    #   #   evalReward = evalModel(env, policy_net, stateSamples, action_index, writer, device)
+    #   #   needToEval = False
+    #   #   if evalReward > bestEvalReward:
+    #   #     # Each time the model does better, save it.
+    #   #     policy_net.save(f'best_{evalReward}.pt')
+    #   #     bestEvalReward = evalReward
+    #   # if (episode_index+1) % 100 == 0:
+    #     # print(f'Episode {episode_index} complete')
+    #   # episode_index += 1
+    #   # episodeReward = 0.0
+    #   # episodeStepIndex = 0
+    #   state, info = env.reset()
+    #   currentObservationTensors = common.observationToTensor(env, state, device)
+    # # else:
+    #   # episodeStepIndex += 1
 
     actionEndTime = time.perf_counter_ns()
-    fpsRunningAverage.add(1.0e9 / (actionEndTime-actionStartTime))
+    fpsRunningAverage.add((1.0e9 / (actionEndTime-actionStartTime)) / env.num_envs)
     writer.add_scalar("fps", fpsRunningAverage.average(), action_index)
 
   policy_net.save('policy_net_script.pt')
