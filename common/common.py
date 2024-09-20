@@ -2,6 +2,7 @@ from collections import deque
 import gymnasium as gym
 import numpy as np
 import torch
+import time
 import torch.nn as nn
 import torch.nn.functional as F
 from pathery_env.wrappers.flatten_action import FlattenActionWrapper
@@ -29,9 +30,9 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  mapString = '6.2.8.Simple...1726718400:,s1.4,f1.'
+  mapString = '27.19.999.Ultra Complex Unlimited...1727020800:,s1.25,r1.,r1.1,r1.14,c1.,z5.,t2.6,f1.,s1.25,r1.,r1.25,f1.,s1.5,z5.5,z5.6,z5.4,r1.1,r1.,r1.10,c5.14,f1.,s1.8,r1.,u4.5,r1.4,c2.4,r1.,r1.4,r1.1,c6.18,f1.,s1.12,r1.6,u1.,u2.4,r1.,r1.6,z5.1,t3.2,t1.4,c3.3,c4.,r1.,t4.,z5.1,f1.,s1.11,c9.13,r1.,r1.1,r1.17,r1.5,f1.,s1.9,r1.4,c7.5,z5.2,c6.1,r1.,r1.25,f1.,s1.3,z5.21,r1.,r1.9,r1.15,f1.,s1.10,c8.,u3.2,r1.10,r1.,r1.9,r1.5,r1.,r1.8,f1.,s1.25,r1.'
   # env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string=mapString)
-  env = gym.make_vec('pathery_env/Pathery-FromMapString', num_envs=2, vectorization_mode="sync", render_mode='ansi', map_string=mapString)
+  env = gym.make_vec('pathery_env/Pathery-FromMapString', num_envs=16, vectorization_mode="async", render_mode='ansi', map_string=mapString)
 
   # env = FlattenActionWrapper(env)
   # env = FlattenBoardObservationWrapper(env) # Uncomment for dense NN
@@ -64,9 +65,11 @@ class ConvDQN(nn.Module):
     # Convolutional layers
     conv_final_channel_count = 64
     self.conv = nn.Sequential(
-      nn.Conv2d(in_channels=input_channels, out_channels=32, kernel_size=3, stride=1, padding=1),
+      nn.Conv2d(in_channels=input_channels, out_channels=128, kernel_size=3, stride=1, padding=1),
       nn.ReLU(),
-      nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+      nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
+      nn.ReLU(),
+      nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=1, padding=1),
       nn.ReLU(),
       nn.Conv2d(in_channels=64, out_channels=conv_final_channel_count, kernel_size=3, stride=1, padding=1),
       nn.ReLU(),
@@ -134,11 +137,11 @@ def getDevice():
     "cpu"
   )
 
-def select_action(env, stateTensor, policy_net, device, eps_threshold, useMask=False, deterministic=False):
+def select_action(env, stateTensor, policy_net, device, epsilonThreshold, useMask=False, deterministic=False):
   """Returns the action as a pytorch tensor on the specified device with the batch dimension added"""
   explore = False
   if not deterministic:
-    explore = np.random.random() <= eps_threshold
+    explore = np.random.random() <= epsilonThreshold
   if explore:
     if False: # TODO: Action masking branch
       mask = stateTensor['action_mask'].flatten()
@@ -203,7 +206,4 @@ def vecSelectActions(env, observationTensors, policyNet, device, epsilonThreshol
         masked_result = torch.where(flattened_mask == 1, netResult, torch.tensor(-float('inf')))
         return masked_result.max(1).indices.view(1,1).squeeze(0)
       else:
-        print(f'Net result is {netResult}')
-        res = netResult.max(1).indices.view(1,1)
-        print(f'[Net] Returning {res}')
-        return res
+        return netResult.max(1).indices.unsqueeze(1)
