@@ -29,7 +29,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='8.8.8.Simple...1726718400:,s1.2,r1.17,r1.2,r1.14,r1.2,r1.17,r1.2,f1.')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.13.Normal...1727150400:,r3.10,r1.4,f1.,r3.2,r1.,r1.5,r1.1,c1.,r1.2,f1.,r3.2,c2.12,f1.,r3.14,r1.,f1.,s1.1,r1.13,f1.,r3.6,r1.4,r1.3,f1.,r3.1,r1.2,r1.10,f1.,r3.2,r1.12,f1.,r3.,r1.10,r1.3,f1.')
 
   env = FlattenActionWrapper(env)
   # env = FlattenBoardObservationWrapper(env) # Uncomment for dense NN
@@ -62,9 +62,9 @@ class ConvDQN(nn.Module):
     # Convolutional layers
     conv_final_channel_count = 64
     self.conv = nn.Sequential(
-      nn.Conv2d(in_channels=input_channels, out_channels=32, kernel_size=3, stride=1, padding=1),
+      nn.Conv2d(in_channels=input_channels, out_channels=128, kernel_size=3, stride=1, padding=1),
       nn.ReLU(),
-      nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
+      nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=1, padding=1),
       nn.ReLU(),
       nn.Conv2d(in_channels=64, out_channels=conv_final_channel_count, kernel_size=3, stride=1, padding=1),
       nn.ReLU(),

@@ -22,11 +22,15 @@ def main(model_path):
     action = common.select_action(env, observationTensor, policy_net, device, eps_threshold=None, deterministic=True)
 
     observation, reward, terminated, truncated, info = env.step(action.item())
+    if not terminated and not truncated:
+      bestSubmissionString = env.unwrapped.getSubmissionString()
     observationTensor = common.observationToTensor(env, observation, device)
     print(env.render())
     print(f'info: {info}')
 
-    done = terminated
+    done = terminated or truncated
+
+  print(f'\nLast solution: "{bestSubmissionString}"')
 
 if __name__ == "__main__":
   main()

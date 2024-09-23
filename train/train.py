@@ -10,6 +10,7 @@ import torch.profiler
 from collections import namedtuple, deque
 from common import common
 from torch.utils.tensorboard import SummaryWriter
+from grokfast_pytorch import GrokFastAdamW
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
@@ -96,20 +97,21 @@ def main():
   EXPLORATION_FRACTION = 0.1
   TAU = 0.95 # 0.005
   LEARNING_RATE = 1e-4
-  TARGET_UPDATE_INTERVAL = 10000
-  TRAIN_FREQUENCY = 1
+  TARGET_UPDATE_INTERVAL = 1000
+  TRAIN_FREQUENCY = 4
   RUNNING_AVERAGE_LENGTH = 128
   EVAL_FREQUENCY = 1000
   STATE_SAMPLE_COUNT = 512
   DOUBLE_DQN = True
-  TOTAL_ACTION_COUNT = 500_000
+  TOTAL_ACTION_COUNT = 5_000_000
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
   target_net = torch.jit.script(common.convFromEnv(env).to(device))
   print(f'Policy net: {policy_net}')
   target_net.load_state_dict(policy_net.state_dict())
 
-  optimizer = optim.AdamW(policy_net.parameters(), lr=LEARNING_RATE, amsgrad=True)
+  # optimizer = optim.AdamW(policy_net.parameters(), lr=LEARNING_RATE, amsgrad=True)
+  optimizer = GrokFastAdamW(policy_net.parameters(), lr=LEARNING_RATE)
   memory = ReplayMemory(100000)
 
   stateSamples = getStateSamples(env, STATE_SAMPLE_COUNT, device)
@@ -178,6 +180,7 @@ def main():
     # In-place gradient clipping
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
+    optimizer.zero_grad()
 
   def evalModel(env, policy_net, stateSamples, action_index, writer, device):
     # Deterministically use the model to play one episode. Log the length & reward.
