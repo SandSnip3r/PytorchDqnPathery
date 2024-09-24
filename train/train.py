@@ -6,28 +6,37 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.profiler
+import typing
 
 from collections import namedtuple, deque
 from common import common
 from torch.utils.tensorboard import SummaryWriter
 from grokfast_pytorch import GrokFastAdamW
 
-Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+from common import PrioritizedExperienceReplay
 
-class ReplayMemory(object):
+# Transition = namedtuple('Transition', ('state', 'action', 'nextState', 'reward'))
 
-  def __init__(self, capacity):
-    self.memory = deque([], maxlen=capacity)
+class Transition(typing.NamedTuple):
+  state: int
+  action: int
+  nextState: int
+  reward: float
 
-  def push(self, *args):
-    """Save a transition"""
-    self.memory.append(Transition(*args))
+# class ReplayMemory(object):
 
-  def sample(self, batch_size):
-    return random.sample(self.memory, batch_size)
+#   def __init__(self, capacity):
+#     self.memory = deque([], maxlen=capacity)
 
-  def __len__(self):
-    return len(self.memory)
+#   def push(self, *args):
+#     """Save a transition"""
+#     self.memory.append(Transition(*args))
+
+#   def sample(self, batch_size):
+#     return random.sample(self.memory, batch_size)
+
+#   def __len__(self):
+#     return len(self.memory)
 
 def set_seed(seed, env, determinism=False):
   # For Python's random module
@@ -94,7 +103,8 @@ def main():
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
   EXPLORATION_FINAL_EPS = 0.05
-  EXPLORATION_FRACTION = 0.1
+  EXPLORATION_FRACTION = 0.02 # Simple
+  # EXPLORATION_FRACTION = 0.04 # Normal
   TAU = 0.95 # 0.005
   LEARNING_RATE = 1e-4
   TARGET_UPDATE_INTERVAL = 1000
@@ -112,7 +122,8 @@ def main():
 
   # optimizer = optim.AdamW(policy_net.parameters(), lr=LEARNING_RATE, amsgrad=True)
   optimizer = GrokFastAdamW(policy_net.parameters(), lr=LEARNING_RATE)
-  memory = ReplayMemory(100000)
+  # memory = ReplayMemory(100000)
+  memory = PrioritizedExperienceReplay(100000, BATCH_SIZE)
 
   stateSamples = getStateSamples(env, STATE_SAMPLE_COUNT, device)
 
@@ -126,21 +137,24 @@ def main():
     if len(memory) < BATCH_SIZE:
       return
     # Get a list of Transitions
-    transitions = memory.sample(BATCH_SIZE)
+    # transitions = memory.sample(BATCH_SIZE)
+    transitionSamples = memory.sample()
+    transitions = [x[0] for x in transitionSamples]
+    indices = [x[1] for x in transitionSamples]
     # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
     # detailed explanation). This converts batch-array of Transitions
     # to Transition of batch-arrays (specifically, they're tuples).
     batch = Transition(*zip(*transitions))
 
-    if all(s is None for s in batch.next_state):
+    if all(s is None for s in batch.nextState):
       # We require at least one next action for any model training
       return
 
     # Compute a mask of non-final states and concatenate the batch elements
     # (a final state would've been the one after which simulation ended)
     non_final_mask = torch.tensor(tuple(map(lambda s: [s is not None],
-                                          batch.next_state)), device=device, dtype=torch.bool)
-    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+                                          batch.nextState)), device=device, dtype=torch.bool)
+    non_final_next_states = torch.cat([s for s in batch.nextState if s is not None])
     state_batch = torch.cat(batch.state)
     action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
@@ -173,6 +187,12 @@ def main():
     # Compute Huber loss
     criterion = nn.SmoothL1Loss()
     loss = criterion(state_action_values, expected_state_action_values)
+    with torch.no_grad():
+      errors = torch.abs(expected_state_action_values - state_action_values).squeeze().cpu()
+      if len(indices) != len(errors):
+        raise ValueError(f'Expecting number of indices ({len(indices)}) and errors ({len(errors)}) to be the same')
+      for i, memoryIndex in enumerate(indices):
+        memory.updatePriorities(memoryIndex, errors[i])
 
     # Optimize the model
     optimizer.zero_grad()
@@ -249,7 +269,7 @@ def main():
 
     # Store the transition in memory
     rewardTensor = torch.tensor([reward], device=device).unsqueeze(0)
-    memory.push(stateTensor, actionTensor, nextStateTensor, rewardTensor)
+    memory.push(Transition(stateTensor, actionTensor, nextStateTensor, rewardTensor), float('inf'))
 
     # Move to the next state
     stateTensor = nextStateTensor
