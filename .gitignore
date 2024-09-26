@@ -3,3 +3,5 @@ runs/*
 experiments.md
 */__pycache__/*
 tb.out
+cpp_modules/build/*
+cpp_modules/*.so

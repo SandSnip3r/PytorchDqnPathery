@@ -15,3 +15,11 @@ I plan to try a convolutional neural network. I also plan to implement action ma
 ## Tensorboard Training Progress Visualization
 
 ![tensorboard](doc/images/tensorboard.png)
+
+## C++ Prioritized Experience Replay
+
+```
+pip install pybind11
+cd cpp_modules
+python setup.py build_ext --inplace
+```

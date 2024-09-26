@@ -14,29 +14,13 @@ from torch.utils.tensorboard import SummaryWriter
 from grokfast_pytorch import GrokFastAdamW
 
 from common import PrioritizedExperienceReplay
-
-# Transition = namedtuple('Transition', ('state', 'action', 'nextState', 'reward'))
+from cpp_modules import prioritized_buffer
 
 class Transition(typing.NamedTuple):
   state: int
   action: int
   nextState: int
   reward: float
-
-# class ReplayMemory(object):
-
-#   def __init__(self, capacity):
-#     self.memory = deque([], maxlen=capacity)
-
-#   def push(self, *args):
-#     """Save a transition"""
-#     self.memory.append(Transition(*args))
-
-#   def sample(self, batch_size):
-#     return random.sample(self.memory, batch_size)
-
-#   def __len__(self):
-#     return len(self.memory)
 
 def set_seed(seed, env, determinism=False):
   # For Python's random module
@@ -122,8 +106,12 @@ def main():
 
   # optimizer = optim.AdamW(policy_net.parameters(), lr=LEARNING_RATE, amsgrad=True)
   optimizer = GrokFastAdamW(policy_net.parameters(), lr=LEARNING_RATE)
-  # memory = ReplayMemory(100000)
-  memory = PrioritizedExperienceReplay(100000, BATCH_SIZE)
+  MEMORY_CAPACITY = 100_000
+  PRIORITIZED_EXPERIENCE_REPLAY_ALPHA = 0.7
+  # memory = ReplayMemory(MEMORY_CAPACITY)
+  # memory = PrioritizedExperienceReplay(MEMORY_CAPACITY, BATCH_SIZE)
+  memory = prioritized_buffer.PrioritizedExperienceReplayBufferObject(MEMORY_CAPACITY, BATCH_SIZE, PRIORITIZED_EXPERIENCE_REPLAY_ALPHA)
+
 
   stateSamples = getStateSamples(env, STATE_SAMPLE_COUNT, device)
 
@@ -139,8 +127,8 @@ def main():
     # Get a list of Transitions
     # transitions = memory.sample(BATCH_SIZE)
     transitionSamples = memory.sample()
-    transitions = [x[0] for x in transitionSamples]
-    indices = [x[1] for x in transitionSamples]
+    transitions = [x.item for x in transitionSamples]
+    indices = [x.dataIndex for x in transitionSamples]
     # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
     # detailed explanation). This converts batch-array of Transitions
     # to Transition of batch-arrays (specifically, they're tuples).
@@ -192,7 +180,7 @@ def main():
       if len(indices) != len(errors):
         raise ValueError(f'Expecting number of indices ({len(indices)}) and errors ({len(errors)}) to be the same')
       for i, memoryIndex in enumerate(indices):
-        memory.updatePriorities(memoryIndex, errors[i])
+        memory.updatePriority(memoryIndex, errors[i])
 
     # Optimize the model
     optimizer.zero_grad()
