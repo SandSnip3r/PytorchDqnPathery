@@ -14,10 +14,11 @@
 template<typename T>
 class PrioritizedExperienceReplayBuffer {
 public:
-  struct ItemAndDataIndex {
-    ItemAndDataIndex(const T &item, std::size_t dataIndex) : item(item), dataIndex(dataIndex) {}
+  struct SampledItem {
+    SampledItem(const T &item, std::size_t dataIndex, double weight) : item(item), dataIndex(dataIndex), weight(weight) {}
     T item;
     std::size_t dataIndex;
+    double weight;
   };
 private:
   struct ItemAndSortedIndex {
@@ -123,13 +124,13 @@ public:
   }
 
   // Returns a list of pairs of objects & indices, for updating priorities.
-  std::vector<ItemAndDataIndex> sample() {
+  std::vector<SampledItem> sample(double beta) {
     if (dataBuffer_.size() < sampleSize_) {
       throw std::runtime_error("Not enough items to sample");
     }
     // std::cout << "Sampling " << sampleSize_ << " items" << std::endl;
     // printLists(1);
-    std::vector<ItemAndDataIndex> result;
+    std::vector<SampledItem> result;
     result.reserve(sampleSize_);
     std::size_t start=0;
     // std::cout << "  Bucket bounds: [";
@@ -146,41 +147,50 @@ public:
       // std::cout << "    sampledDataIndex: " << sampledDataIndex << std::endl;
       const auto &dataBufferItem = dataBuffer_[sampledDataIndex];
       // std::cout << "    Sampled item \"" << dataBufferItem.item << "\" from data index " << sampledDataIndex << std::endl;
-      result.emplace_back(dataBufferItem.item, sampledDataIndex);
+      // Calculate the weight associated with this item.
+      const double importanceSamplingWeight = std::pow((1.0 / dataBuffer_.size() * (end-start)), beta);
+      result.emplace_back(dataBufferItem.item, sampledDataIndex, importanceSamplingWeight);
       start = end;
     }
     return result;
   }
 
   void updatePriority(std::size_t dataIndexOfPriorityToUpdate, double newPriority) {
-    std::size_t sortedIndex = dataBuffer_.at(dataIndexOfPriorityToUpdate).sortedIndex;
-    // std::cout << "Updating priority of item \"" << dataBuffer_.at(dataIndexOfPriorityToUpdate).item << "\" from " << sortedIndices_.at(sortedIndex).priority << " to " << newPriority << std::endl;
+    const std::size_t sortedIndex = dataBuffer_.at(dataIndexOfPriorityToUpdate).sortedIndex;
     sortedIndices_.at(sortedIndex).priority = newPriority;
-    // If new priority is lower, bubble down in sorted list until item is in final place.
-    while (sortedIndex < sortedIndices_.size()-1 && sortedIndices_.at(sortedIndex).priority < sortedIndices_.at(sortedIndex+1).priority) {
-      // std::cout << "  Swapping " << sortedIndex << " with " << sortedIndex+1 << "; " << sortedIndices_.at(sortedIndex).priority << " vs " << sortedIndices_.at(sortedIndex+1).priority << std::endl;
-      std::swap(sortedIndices_.at(sortedIndex), sortedIndices_.at(sortedIndex+1));
-      // Update other item that we moved
-      // std::cout << "    Index held by data item at index " << sortedIndices_.at(sortedIndex).dataIndex << " decrements from " << dataBuffer_.at(sortedIndices_.at(sortedIndex).dataIndex).sortedIndex << std::endl;
-      --dataBuffer_.at(sortedIndices_.at(sortedIndex).dataIndex).sortedIndex;
-      ++sortedIndex;
-      // std::cout << "    Our item is now at index " << sortedIndex << std::endl;
+    // Find new position of item
+    std::size_t finalIndex = sortedIndex;
+    // Only one of these while loops will execute.
+    while (finalIndex < sortedIndices_.size()-1 && sortedIndices_.at(sortedIndex).priority < sortedIndices_.at(finalIndex+1).priority) {
+      ++finalIndex;
     }
-    // If new priority is higher, bubble up in sorted list until item is in final place.
-    while (sortedIndex > 0 && sortedIndices_.at(sortedIndex).priority > sortedIndices_.at(sortedIndex-1).priority) {
-      // std::cout << "  Swapping " << sortedIndex << " with " << sortedIndex-1 << "; " << sortedIndices_.at(sortedIndex).priority << " vs " << sortedIndices_.at(sortedIndex-1).priority << std::endl;
-      std::swap(sortedIndices_.at(sortedIndex), sortedIndices_.at(sortedIndex-1));
-      // Update other item that we moved
-      // std::cout << "    Index held by data item at index " << sortedIndices_.at(sortedIndex).dataIndex << " increments from " << dataBuffer_.at(sortedIndices_.at(sortedIndex).dataIndex).sortedIndex << std::endl;
-      ++dataBuffer_.at(sortedIndices_.at(sortedIndex).dataIndex).sortedIndex;
-      --sortedIndex;
-      // std::cout << "    Our item is now at index " << sortedIndex << std::endl;
+    while (finalIndex > 0 && sortedIndices_.at(sortedIndex).priority > sortedIndices_.at(finalIndex-1).priority) {
+      --finalIndex;
     }
-    // std::cout << "  Done iterating " << (sortedIndex < sortedIndices_.size()-1) << " && " << (sortedIndices_.at(sortedIndex).priority > sortedIndices_.at(sortedIndex+1).priority) << "(" << sortedIndices_.at(sortedIndex).priority << " > " << sortedIndices_.at(sortedIndex+1).priority << ")" << std::endl;
-    // Finally, set our index in the data buffer
-    // std::cout << "  Our databuffer index is " << sortedIndices_.at(sortedIndex).dataIndex << "; Updating sorted index from " << dataBuffer_.at(sortedIndices_.at(sortedIndex).dataIndex).sortedIndex << " to " << sortedIndex << std::endl;
-    dataBuffer_.at(sortedIndices_.at(sortedIndex).dataIndex).sortedIndex = sortedIndex;
-    // printLists(2);
+    if (finalIndex == sortedIndex) {
+      // Already where it should be; nothing to do.
+      return;
+    }
+    // Remove our item from the list. This will shift everything after it to the left by 1.
+    const PriorityAndDataIndex sortedItem = sortedIndices_.at(sortedIndex);
+    sortedIndices_.erase(sortedIndices_.begin()+sortedIndex);
+    if (finalIndex > sortedIndex) {
+      // Update the indices of all permanently moved data buffers.
+      for (std::size_t i=sortedIndex; i<finalIndex; ++i) {
+        dataBuffer_.at(sortedIndices_.at(i).dataIndex).sortedIndex = i;
+      }
+      // Insert ourt item into the new position.
+      sortedIndices_.insert(sortedIndices_.begin()+finalIndex, sortedItem);
+    } else if (finalIndex < sortedIndex) {
+      // Insert ourt item into the new position.
+      sortedIndices_.insert(sortedIndices_.begin()+finalIndex, sortedItem);
+      // Update the indices of all permanently moved data buffers.
+      for (std::size_t i=finalIndex+1; i<=sortedIndex; ++i) {
+        dataBuffer_.at(sortedIndices_.at(i).dataIndex).sortedIndex = i;
+      }
+    }
+    // Also update the index of our item
+    dataBuffer_.at(sortedItem.dataIndex).sortedIndex = finalIndex;
   }
 
   std::size_t size() const {
@@ -221,11 +231,11 @@ private:
 //     }
 //     std::cout << std::string(indentLevel*2, ' ') << "]\n";
 //   }
-//   void printSortedItemsWithPriorities(int indentLevel=0) const {
-//     for (std::size_t i=0; i<sortedIndices_.size(); ++i) {
-//       std::cout << std::string(indentLevel*2, ' ') << '"' << dataBuffer_.at(sortedIndices_.at(i).dataIndex).item << "\" " << sortedIndices_.at(i).priority << std::endl;
-//     }
-//   }
+  // void printSortedItemsWithPriorities(int indentLevel=0) const {
+  //   for (std::size_t i=0; i<sortedIndices_.size(); ++i) {
+  //     std::cout << std::string(indentLevel*2, ' ') << '"' << dataBuffer_.at(sortedIndices_.at(i).dataIndex).item << "\" " << sortedIndices_.at(i).priority << std::endl;
+  //   }
+  // }
 };
 
 #endif // PRIORITIZED_EXPERIENCE_REPLAY_BUFFER_HPP_

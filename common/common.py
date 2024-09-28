@@ -29,8 +29,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='13.6.7.Simple...1727236800:,r3.2,r1.8,r3.,r3.11,r3.,r3.3,r1.7,r3.,r3.5,c1.5,r3.,s1.4,r1.6,r3.,r3.11,f1.')
-  # env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.14.Normal...1727236800:,r3.10,c1.4,f1.,r3.2,r1.12,f1.,r3.9,r1.5,f1.,r3.7,r1.,r1.2,r1.3,f1.,r3.6,r1.8,f1.,r3.3,r1.2,c2.6,r1.1,f1.,r3.2,r1.3,r1.8,f1.,s1.5,r1.9,f1.,r3.7,r1.7,f1.')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='13.6.8.Simple...1727582400:,r3.11,f1.,r3.11,r3.,s1.11,r3.,r3.1,r1.2,r1.1,r1.4,r3.,r3.5,c1.5,r3.,r3.2,r1.8,r3.')
 
   env = FlattenActionWrapper(env)
   # env = FlattenBoardObservationWrapper(env) # Uncomment for dense NN

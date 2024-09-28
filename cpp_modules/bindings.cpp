@@ -9,15 +9,17 @@ template<typename T>
 void declare_prioritized_experience_replay_buffer(py::module &m, const std::string &type) {
   using Buffer = PrioritizedExperienceReplayBuffer<T>;
 
-  // Bind the ItemAndDataIndex struct
-  py::class_<typename Buffer::ItemAndDataIndex>(m, ("ItemAndDataIndex" + type).c_str())
-    .def_readonly("item", &Buffer::ItemAndDataIndex::item)
-    .def_readonly("dataIndex", &Buffer::ItemAndDataIndex::dataIndex);
+  // Bind the SampledItem struct
+  py::class_<typename Buffer::SampledItem>(m, ("SampledItem" + type).c_str())
+    .def_readonly("item", &Buffer::SampledItem::item)
+    .def_readonly("dataIndex", &Buffer::SampledItem::dataIndex)
+    .def_readonly("weight", &Buffer::SampledItem::weight);
+
   
   py::class_<Buffer>(m, ("PrioritizedExperienceReplayBuffer" + type).c_str())
     .def(py::init<int, int, double>(), py::arg("capacity"), py::arg("sampleSize"), py::arg("alpha"))
     .def("push", &Buffer::push, py::arg("item"), py::arg("priority"))
-    .def("sample", &Buffer::sample)
+    .def("sample", &Buffer::sample, py::arg("beta"))
     .def("updatePriority", &Buffer::updatePriority, py::arg("dataIndexOfPriorityToUpdate"), py::arg("newPriority"))
     .def("__len__", &Buffer::size);
 }

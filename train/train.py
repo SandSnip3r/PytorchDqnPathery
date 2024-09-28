@@ -22,6 +22,21 @@ class Transition(typing.NamedTuple):
   nextState: int
   reward: float
 
+class ReplayMemory(object):
+
+  def __init__(self, capacity):
+    self.memory = deque([], maxlen=capacity)
+
+  def push(self, item: Transition):
+    """Save a transition"""
+    self.memory.append(item)
+
+  def sample(self, batch_size):
+    return random.sample(self.memory, batch_size)
+
+  def __len__(self):
+    return len(self.memory)
+
 def set_seed(seed, env, determinism=False):
   # For Python's random module
   random.seed(seed)
@@ -72,6 +87,11 @@ def main():
   INITIAL_SEED = 123
   set_seed(INITIAL_SEED, env)
 
+  # Good parameters:
+  #   Simple:
+  #     Exploration fraction 0.02
+  #     Action count: 1m
+  #     Eval freq: 1k
   # BATCH_SIZE is the number of transitions sampled from the replay buffer
   # GAMMA is the discount factor
   # EXPLORATION_INITIAL_EPS is the starting value of epsilon
@@ -84,20 +104,26 @@ def main():
   # RUNNING_AVERAGE_LENGTH is the sample count for statistics
   # EVAL_FREQUENCY is the number of actions per evalutation
   BATCH_SIZE = 64
+  STEP_BEFORE_TRAINING = 8192
   GAMMA = 0.99
   EXPLORATION_INITIAL_EPS = 1.0
   EXPLORATION_FINAL_EPS = 0.05
-  EXPLORATION_FRACTION = 0.02 # Simple
+  EXPLORATION_FRACTION = 0.1
   # EXPLORATION_FRACTION = 0.04 # Normal
+  # EXPLORATION_FRACTION = 0.1 # Complex
   TAU = 0.95 # 0.005
   LEARNING_RATE = 1e-4
-  TARGET_UPDATE_INTERVAL = 1000
+  TARGET_UPDATE_INTERVAL = 4000
   TRAIN_FREQUENCY = 4
   RUNNING_AVERAGE_LENGTH = 128
   EVAL_FREQUENCY = 1000
   STATE_SAMPLE_COUNT = 512
   DOUBLE_DQN = True
-  TOTAL_ACTION_COUNT = 5_000_000
+  TOTAL_ACTION_COUNT = 1_000_000
+  MEMORY_CAPACITY = 100_000
+  PRIORITIZED_EXPERIENCE_REPLAY_ALPHA = 0.7
+  PRIORITIZED_EXPERIENCE_REPLAY_BETA = 0.8
+  USE_PRIORITIZED_EXPERIENCE_REPLAY = False
 
   policy_net = torch.jit.script(common.convFromEnv(env).to(device))
   target_net = torch.jit.script(common.convFromEnv(env).to(device))
@@ -106,12 +132,11 @@ def main():
 
   # optimizer = optim.AdamW(policy_net.parameters(), lr=LEARNING_RATE, amsgrad=True)
   optimizer = GrokFastAdamW(policy_net.parameters(), lr=LEARNING_RATE)
-  MEMORY_CAPACITY = 100_000
-  PRIORITIZED_EXPERIENCE_REPLAY_ALPHA = 0.7
-  # memory = ReplayMemory(MEMORY_CAPACITY)
-  # memory = PrioritizedExperienceReplay(MEMORY_CAPACITY, BATCH_SIZE)
-  memory = prioritized_buffer.PrioritizedExperienceReplayBufferObject(MEMORY_CAPACITY, BATCH_SIZE, PRIORITIZED_EXPERIENCE_REPLAY_ALPHA)
-
+  if USE_PRIORITIZED_EXPERIENCE_REPLAY:
+    # memory = PrioritizedExperienceReplay(MEMORY_CAPACITY, BATCH_SIZE)
+    memory = prioritized_buffer.PrioritizedExperienceReplayBufferObject(MEMORY_CAPACITY, BATCH_SIZE, PRIORITIZED_EXPERIENCE_REPLAY_ALPHA)
+  else:
+    memory = ReplayMemory(MEMORY_CAPACITY)
 
   stateSamples = getStateSamples(env, STATE_SAMPLE_COUNT, device)
 
@@ -122,13 +147,16 @@ def main():
     return EXPLORATION_INITIAL_EPS + (EXPLORATION_FINAL_EPS-EXPLORATION_INITIAL_EPS) * (min(progress, EXPLORATION_FRACTION) / EXPLORATION_FRACTION)
 
   def optimize_model():
-    if len(memory) < BATCH_SIZE:
+    if len(memory) < max(BATCH_SIZE, STEP_BEFORE_TRAINING):
       return
     # Get a list of Transitions
-    # transitions = memory.sample(BATCH_SIZE)
-    transitionSamples = memory.sample()
-    transitions = [x.item for x in transitionSamples]
-    indices = [x.dataIndex for x in transitionSamples]
+    if USE_PRIORITIZED_EXPERIENCE_REPLAY:
+      transitionSamples = memory.sample(PRIORITIZED_EXPERIENCE_REPLAY_BETA)
+      transitions = [x.item for x in transitionSamples]
+      indices = [x.dataIndex for x in transitionSamples]
+      importanceSamplingWeights = [x.weight for x in transitionSamples]
+    else:
+      transitions = memory.sample(BATCH_SIZE)
     # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
     # detailed explanation). This converts batch-array of Transitions
     # to Transition of batch-arrays (specifically, they're tuples).
@@ -173,14 +201,23 @@ def main():
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
     # Compute Huber loss
-    criterion = nn.SmoothL1Loss()
-    loss = criterion(state_action_values, expected_state_action_values)
-    with torch.no_grad():
-      errors = torch.abs(expected_state_action_values - state_action_values).squeeze().cpu()
-      if len(indices) != len(errors):
-        raise ValueError(f'Expecting number of indices ({len(indices)}) and errors ({len(errors)}) to be the same')
-      for i, memoryIndex in enumerate(indices):
-        memory.updatePriority(memoryIndex, errors[i])
+    if USE_PRIORITIZED_EXPERIENCE_REPLAY:
+      criterion = nn.SmoothL1Loss(reduction='none')
+      losses = criterion(state_action_values, expected_state_action_values)
+      isWeightsTensor = torch.tensor(importanceSamplingWeights, dtype=torch.float32, device=device)
+      weightedLosses = losses.squeeze() * isWeightsTensor
+      loss = weightedLosses.mean()
+      # Update priorities of Transitions we just trained on with their new losses
+      with torch.no_grad():
+        errors = torch.abs(expected_state_action_values - state_action_values).squeeze().cpu()
+        if len(indices) != len(errors):
+          raise ValueError(f'Expecting number of indices ({len(indices)}) and errors ({len(errors)}) to be the same')
+        for i, memoryIndex in enumerate(indices):
+          memory.updatePriority(memoryIndex, errors[i])
+    else:
+      # Compute Huber loss
+      criterion = nn.SmoothL1Loss()
+      loss = criterion(state_action_values, expected_state_action_values)
 
     # Optimize the model
     optimizer.zero_grad()
@@ -188,7 +225,6 @@ def main():
     # In-place gradient clipping
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
-    optimizer.zero_grad()
 
   def evalModel(env, policy_net, stateSamples, action_index, writer, device):
     # Deterministically use the model to play one episode. Log the length & reward.
@@ -205,6 +241,8 @@ def main():
       stepCount += 1
       done = terminated
 
+    finalPathLength = len(env.unwrapped.currentPath)
+    writer.add_scalar("eval/final_path_length", finalPathLength, action_index)
     writer.add_scalar("eval/episode_reward", episodeReward, action_index)
     writer.add_scalar("eval/episode_length", stepCount, action_index)
 
@@ -213,7 +251,7 @@ def main():
       meanQValue = policy_net(stateSamples).max(1).values.mean()
     writer.add_scalar("eval/mean_max_q_value", meanQValue, action_index)
 
-    return episodeReward
+    return finalPathLength
 
   def updateTarget():
     print(f'Updating target network (episode #{episode_index}, action #{action_index})')
@@ -236,7 +274,7 @@ def main():
   episodeStepIndex = 0
   episode_index = 0
   needToEval = False
-  bestEvalReward = 0
+  bestPathLength = 0
   for action_index in range(TOTAL_ACTION_COUNT):
     # Start timing of action step
     actionStartTime = time.perf_counter_ns()
@@ -257,7 +295,10 @@ def main():
 
     # Store the transition in memory
     rewardTensor = torch.tensor([reward], device=device).unsqueeze(0)
-    memory.push(Transition(stateTensor, actionTensor, nextStateTensor, rewardTensor), float('inf'))
+    if USE_PRIORITIZED_EXPERIENCE_REPLAY:
+      memory.push(Transition(stateTensor, actionTensor, nextStateTensor, rewardTensor), float('inf'))
+    else:
+      memory.push(Transition(stateTensor, actionTensor, nextStateTensor, rewardTensor))
 
     # Move to the next state
     stateTensor = nextStateTensor
@@ -278,12 +319,12 @@ def main():
       writer.add_scalar("train/episode_reward", trainEpisodeRewardRunningAverage.average(), action_index)
       writer.add_scalar("train/episode_length", trainEpisodeLengthRunningAverage.average(), action_index)
       if needToEval:
-        evalReward = evalModel(env, policy_net, stateSamples, action_index, writer, device)
+        pathLength = evalModel(env, policy_net, stateSamples, action_index, writer, device)
         needToEval = False
-        if evalReward > bestEvalReward:
+        if pathLength > bestPathLength:
           # Each time the model does better, save it.
-          policy_net.save(f'best_{evalReward}.pt')
-          bestEvalReward = evalReward
+          policy_net.save(f'best_{pathLength}.pt')
+          bestPathLength = pathLength
       if (episode_index+1) % 100 == 0:
         print(f'Episode {episode_index} complete')
       episode_index += 1
