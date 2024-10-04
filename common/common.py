@@ -29,7 +29,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='13.6.8.Simple...1727582400:,r3.11,f1.,r3.11,r3.,s1.11,r3.,r3.1,r1.2,r1.1,r1.4,r3.,r3.5,c1.5,r3.,r3.2,r1.8,r3.')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.10.Normal...1727668800:,r3.8,c2.6,f1.,r3.4,r1.10,f1.,r3.3,r1.5,r1.5,f1.,r3.6,r1.8,f1.,r3.1,r1.4,r1.8,f1.,r3.2,r1.4,r1.7,f1.,s1.5,r1.,r1.,r1.,r1.6,f1.,r3.15,f1.,r3.3,c1.11,f1.')
 
   env = FlattenActionWrapper(env)
   # env = FlattenBoardObservationWrapper(env) # Uncomment for dense NN
@@ -60,22 +60,42 @@ class ConvDQN(nn.Module):
     print(f'Initializing net with input channels: {input_channels}, grid size: ({grid_height}, {grid_width}), and {n_actions} actions')
 
     # Convolutional layers
-    conv_final_channel_count = 64
-    self.conv = nn.Sequential(
-      nn.Conv2d(in_channels=input_channels, out_channels=128, kernel_size=3, stride=1, padding=1),
+    firstConvLayerOutputChannelCount = 256
+    self.firstConvLayer = nn.Sequential(
+      nn.Conv2d(in_channels=input_channels, out_channels=firstConvLayerOutputChannelCount, kernel_size=3, stride=1, padding=1),
+      nn.BatchNorm2d(firstConvLayerOutputChannelCount),
+      nn.ReLU()
+    )
+    self.residualLayerOutputChannelCount = 256
+    self.residualLayer = nn.Sequential(
+      nn.Conv2d(in_channels=firstConvLayerOutputChannelCount, out_channels=256, kernel_size=3, stride=1, padding=1),
+      nn.BatchNorm2d(256),
       nn.ReLU(),
-      nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.Conv2d(in_channels=64, out_channels=conv_final_channel_count, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
+      nn.Conv2d(in_channels=256, out_channels=self.residualLayerOutputChannelCount, kernel_size=3, stride=1, padding=1),
+      nn.BatchNorm2d(self.residualLayerOutputChannelCount),
+    )
+    # A nn.ReLU() will follow; see `forward()`
+    self.residualLayerCount = 1
+
+    # Optional: a 1x1 convolution to match the input and output dimensions if needed
+    if firstConvLayerOutputChannelCount != self.residualLayerOutputChannelCount:
+      self.skipTransform = nn.Conv2d(firstConvLayerOutputChannelCount, self.residualLayerOutputChannelCount, kernel_size=1)
+    else:
+      self.skipTransform = None
+
+    self.finalConvChannelCount = 128
+    self.final1x1ConvLayer = nn.Sequential(
+      nn.Conv2d(in_channels=self.residualLayerOutputChannelCount, out_channels=self.finalConvChannelCount, kernel_size=1),
+      nn.BatchNorm2d(self.finalConvChannelCount),
+      nn.ReLU()
     )
 
     # Calculate the size of the output from conv layers for the fully connected layer
     # Assuming the conv layers do not change the spatial dimensions (stride=1 and padding=1)
-    conv_output_size = conv_final_channel_count * grid_height * grid_width
+    conv_output_size = self.finalConvChannelCount * grid_height * grid_width
 
     # Fully connected layer
-    self.fc = nn.Sequential(
+    self.fullyConnectedLayer = nn.Sequential(
       nn.Linear(conv_output_size, n_actions)
     )
 
@@ -87,13 +107,25 @@ class ConvDQN(nn.Module):
       x = x.unsqueeze(0)
 
     # Pass through convolutional layers
-    x = self.conv(x)
+    x = self.firstConvLayer(x)
+    for i in range(self.residualLayerCount):
+      dataAfterFirstConvLayer = x
+      x = self.residualLayer(x)
+      # Add skip connection
+      if self.skipTransform is not None:
+        dataAfterFirstConvLayer = self.skipTransform(dataAfterFirstConvLayer)
+      x += dataAfterFirstConvLayer
+      # Run a final relu
+      x = F.relu(x)
 
-    # Flatten the output for the fully connected layer
+    # Run through a final conv layer to flatten all channels
+    x = self.final1x1ConvLayer(x)
+
+    # Flatten the 2d output for the fully connected layer
     x = x.view(x.size(0), -1)
 
     # Pass through fully connected layer
-    return self.fc(x)
+    return self.fullyConnectedLayer(x)
 
 def isWrappedBy(env, wrapper_type):
   """Recursively unwrap env to check if any wrapper is of type wrapper_type."""
