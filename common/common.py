@@ -29,7 +29,7 @@ class RunningAverage:
     return self.total / len(self.buffer)
 
 def getEnv():
-  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='17.9.10.Normal...1727668800:,r3.8,c2.6,f1.,r3.4,r1.10,f1.,r3.3,r1.5,r1.5,f1.,r3.6,r1.8,f1.,r3.1,r1.4,r1.8,f1.,r3.2,r1.4,r1.7,f1.,s1.5,r1.,r1.,r1.,r1.6,f1.,r3.15,f1.,r3.3,c1.11,f1.')
+  env = gym.make('pathery_env/Pathery-FromMapString', render_mode='ansi', map_string='19.9.15.Complex...1728187200:,s1.6,r1.2,r1.7,f1.,s1.11,c1.3,t2.1,f1.,s1.5,r1.9,r1.1,f1.,s1.7,c3.,r1.8,f1.,s1.6,u2.10,f1.,s1.3,z5.7,r1.5,f1.,s1.,c2.6,r1.3,t1.,r1.,r1.,u1.2,f1.,s1.9,r1.7,f1.,s1.15,r1.1,f1.')
 
   env = FlattenActionWrapper(env)
   # env = FlattenBoardObservationWrapper(env) # Uncomment for dense NN
@@ -66,16 +66,16 @@ class ConvDQN(nn.Module):
       nn.BatchNorm2d(firstConvLayerOutputChannelCount),
       nn.ReLU()
     )
+    self.residualLayerCount = 2
     self.residualLayerOutputChannelCount = 256
-    self.residualLayer = nn.Sequential(
+    self.residualLayers = nn.ModuleList([nn.Sequential(
       nn.Conv2d(in_channels=firstConvLayerOutputChannelCount, out_channels=256, kernel_size=3, stride=1, padding=1),
       nn.BatchNorm2d(256),
       nn.ReLU(),
       nn.Conv2d(in_channels=256, out_channels=self.residualLayerOutputChannelCount, kernel_size=3, stride=1, padding=1),
       nn.BatchNorm2d(self.residualLayerOutputChannelCount),
-    )
-    # A nn.ReLU() will follow; see `forward()`
-    self.residualLayerCount = 1
+      # A nn.ReLU() will follow; see `forward()`
+    ) for _ in range(self.residualLayerCount)])
 
     # Optional: a 1x1 convolution to match the input and output dimensions if needed
     if firstConvLayerOutputChannelCount != self.residualLayerOutputChannelCount:
@@ -108,9 +108,9 @@ class ConvDQN(nn.Module):
 
     # Pass through convolutional layers
     x = self.firstConvLayer(x)
-    for i in range(self.residualLayerCount):
-      dataAfterFirstConvLayer = x
-      x = self.residualLayer(x)
+    for residualLayer in self.residualLayers:
+      dataAfterFirstConvLayer = x.clone()
+      x = residualLayer(x)
       # Add skip connection
       if self.skipTransform is not None:
         dataAfterFirstConvLayer = self.skipTransform(dataAfterFirstConvLayer)

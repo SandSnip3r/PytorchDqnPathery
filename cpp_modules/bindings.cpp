@@ -12,9 +12,8 @@ void declare_prioritized_experience_replay_buffer(py::module &m, const std::stri
   // Bind the SampledItem struct
   py::class_<typename Buffer::SampledItem>(m, ("SampledItem" + type).c_str())
     .def_readonly("item", &Buffer::SampledItem::item)
-    .def_readonly("dataIndex", &Buffer::SampledItem::dataIndex)
+    .def_readonly("itemId", &Buffer::SampledItem::itemId)
     .def_readonly("weight", &Buffer::SampledItem::weight);
-
   
   py::class_<Buffer>(m, ("PrioritizedExperienceReplayBuffer" + type).c_str())
     .def(py::init<int, int, double>(), py::arg("capacity"), py::arg("sampleSize"), py::arg("alpha"))

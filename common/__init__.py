@@ -1,1 +1,2 @@
 from .replay_buffer import PrioritizedExperienceReplay
+from .visualizer import Visualizer
