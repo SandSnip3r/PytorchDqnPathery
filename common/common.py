@@ -60,6 +60,48 @@ class ConvDQN(nn.Module):
     print(f'Initializing net with input channels: {input_channels}, grid size: ({grid_height}, {grid_width}), and {n_actions} actions')
 
     # Convolutional layers
+    conv_final_channel_count = 64
+    self.conv = nn.Sequential(
+      nn.Conv2d(in_channels=input_channels, out_channels=128, kernel_size=3, stride=1, padding=1),
+      nn.ReLU(),
+      nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=1, padding=1),
+      nn.ReLU(),
+      nn.Conv2d(in_channels=64, out_channels=conv_final_channel_count, kernel_size=3, stride=1, padding=1),
+      nn.ReLU(),
+    )
+
+    # Calculate the size of the output from conv layers for the fully connected layer
+    # Assuming the conv layers do not change the spatial dimensions (stride=1 and padding=1)
+    conv_output_size = conv_final_channel_count * grid_height * grid_width
+
+    # Fully connected layer
+    self.fc = nn.Sequential(
+      nn.Linear(conv_output_size, n_actions)
+    )
+
+  # Called with either one element to determine next action, or a batch
+  # during optimization. Returns tensor([[left0exp,right0exp]...]).
+  def forward(self, x):
+    if x.dim() == 3:
+      # Add a batch dimension
+      x = x.unsqueeze(0)
+
+    # Pass through convolutional layers
+    x = self.conv(x)
+
+    # Flatten the output for the fully connected layer
+    x = x.view(x.size(0), -1)
+
+    # Pass through fully connected layer
+    return self.fc(x)
+
+class ConvResidualDQN(nn.Module):
+
+  def __init__(self, input_channels, grid_height, grid_width, n_actions):
+    super(ConvResidualDQN, self).__init__()
+    print(f'Initializing net with input channels: {input_channels}, grid size: ({grid_height}, {grid_width}), and {n_actions} actions')
+
+    # Convolutional layers
     firstConvLayerOutputChannelCount = 256
     self.firstConvLayer = nn.Sequential(
       nn.Conv2d(in_channels=input_channels, out_channels=firstConvLayerOutputChannelCount, kernel_size=3, stride=1, padding=1),
@@ -144,6 +186,10 @@ def denseFromEnv(env):
 def convFromEnv(env):
   n_actions = int(env.action_space.n)
   return ConvDQN(*env.observation_space[PatheryEnv.OBSERVATION_BOARD_STR].shape, n_actions)
+
+def convResidualFromEnv(env):
+  n_actions = int(env.action_space.n)
+  return ConvResidualDQN(*env.observation_space[PatheryEnv.OBSERVATION_BOARD_STR].shape, n_actions)
 
 def observationToTensor(env, obs, device):
   """Returns the observation as a pytorch tensor on the specified device with the batch dimension added"""

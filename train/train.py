@@ -138,8 +138,8 @@ def main(experimentName: str = None):
   PRIORITIZED_EXPERIENCE_REPLAY_BETA_FINAL = 1.0
   USE_PRIORITIZED_EXPERIENCE_REPLAY = True
 
-  policy_net = torch.jit.script(common.convFromEnv(env).to(device))
-  target_net = torch.jit.script(common.convFromEnv(env).to(device))
+  policy_net = torch.jit.script(common.convResidualFromEnv(env).to(device))
+  target_net = torch.jit.script(common.convResidualFromEnv(env).to(device))
   print(f'Policy net: {policy_net}')
   target_net.load_state_dict(policy_net.state_dict())
   target_net.eval()
